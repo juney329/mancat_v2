@@ -1,0 +1,37 @@
+// Placeholder proto per SPEC — replace with the real CRFS DataGeneric schema.
+// Generate Python with:
+//   python -m grpc_tools.protoc -I. --python_out=. pbd2.proto
+// This produces `pbd2_pb2.py` beside these scripts.
+
+syntax = "proto3";
+
+package crfs;
+
+message DataGeneric {
+  double UnixTime = 1;
+  DataContainer Data = 2;
+}
+
+message DataContainer {
+  repeated Element Elements = 1;
+}
+
+message Element {
+  double IndexStart = 1; // Hz
+  double IndexStop  = 2; // Hz
+  Trace TraceData   = 3;
+}
+
+message Trace {
+  YStore YDataStore = 1;
+}
+
+message YStore {
+  DsDouble16 DsDouble16 = 1;
+}
+
+message DsDouble16 {
+  bytes Bytes = 1; // little-endian uint16 codes
+  double Min = 2;  // dB min
+  double Max = 3;  // dB max
+}

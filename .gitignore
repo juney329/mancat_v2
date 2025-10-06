@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtualenv
+.venv/
+venv/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Build / artifacts
+*.npy
+*.npz
+*.dat
+meta_band*.json
+tiers_band*.json
+markers_band*.json
+freqs0_band*.npy
+rel_t_band*.npy
+waterfall_band*.dat
+
+# Protobuf generated
+pbd2_pb2.py
+
+# Streamlit
+.streamlit/
+
+# Logs
+*.log
