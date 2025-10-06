@@ -36,3 +36,4 @@ pbd2_pb2.py
 
 # Logs
 *.log
+.pytest_cache/

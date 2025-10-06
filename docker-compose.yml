@@ -1,0 +1,28 @@
+version: '3.9'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      - DATA_DIR=/data
+      - FRONTEND_ORIGIN=http://localhost:3000
+    volumes:
+      - ./data:/data:ro
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      - NEXT_PUBLIC_API_BASE=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - ./data:/data:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
