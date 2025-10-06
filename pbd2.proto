@@ -1,37 +1,982 @@
-// Placeholder proto per SPEC — replace with the real CRFS DataGeneric schema.
-// Generate Python with:
-//   python -m grpc_tools.protoc -I. --python_out=. pbd2.proto
-// This produces `pbd2_pb2.py` beside these scripts.
+﻿//*****************************************************************************
+//            CRFS ProtocolBuffer Data Definition pbd2                          
+//*****************************************************************************
+//  For streaming, each pbd2 message is prefixed with a single 32bit length indicator
+//  for the following message length in bytes.
 
-syntax = "proto3";
+syntax = "proto2";
+package CRFS.Data.pbd2;
 
-package crfs;
-
+// > The DataGeneric Message
+// DataGeneric is the basic data container for all data items and allows for association
+// of attributes and collection of related data elements
 message DataGeneric {
-  double UnixTime = 1;
-  DataContainer Data = 2;
+
+   // The data version of the underlying RFeyeData that has been serialized
+   optional uint32 DataVersion = 1 [default = 0];
+
+   // A name string for the data item
+   optional string Name = 2;
+
+   // A data timestamp represented as a double value as seconds since the Epoc (Unix Time in seconds)
+   optional double UnixTime = 3 [default = 0];
+
+   // A Collection of DataElements that are to be regarded as attributes of the data
+   optional DataElementCollection CustomAttributes = 4;
+
+   // A Collection of DataElements that are to be regarded as the core data content
+   optional DataElementCollection Data = 5;
+
+   // A nominal display color for the data
+   optional uint32 ColorARGB = 6 [default = 0];
+
+   // An identifier for the 'Stream' that the data belongs to - see the ThreadID message
+   optional ThreadID StreamID = 7;
+
+   // An identifier for the 'Origin' that the data originated from  - see the ThreadID message
+   optional ThreadID OriginID = 8;
+
+   // A flag to indicate that existing data in this Thread/Stream/Origin should be cleared
+   optional bool DataClear = 11 [default = false];
+
+   // A flag to indicate how the data should be treated (Static or Dynamic)
+   optional DataVolatility Volatility = 12 [default = Dynamic];
+
+   // A flag to indicate that data on this Stream has ended.
+   // If this is sent in combination with EndOfOrigin then all use of data
+   // downstream for the specific combination of Stream and Origin should be cleared
+   // If this is sent without EndOfOrigin then all use of data downstream for this
+   // Stream, regardless of Origin should be cleared.
+   optional bool EndOfStream = 13 [default = false];
+
+   // A flag to indicate that data from this Origin has ended.
+   // This flag is ONLY valid if sent in combination with EndOfStream.
+   // When sent in combination with EndOfStream then all use of data downstream
+   // for the specific combination of Stream and Origin should be cleared.
+   optional bool EndOfOrigin = 14 [default = false];
+
+   // A flag to indicate that data originating from a file has reached the end of the file.
+   // This is different from EndOfStream/EndOfOrigin because EOS/EOO might indicate that
+   // the provider reading the file was being disabled or deleted, whereas EOF specifically
+   // indicates the provider has reached the end of the file, and will then either stop, or
+   // is loop again from the start of the file (if a repeat function is supported and enabled).
+   optional bool EndOfFile = 15 [default = false];
+   // A globally-unique identifier that allows related but separate DataGeneric
+   // objects to reference each other
+   optional string GuidString = 16;
+
 }
 
-message DataContainer {
-  repeated Element Elements = 1;
+
+
+// > The DataElementCollection Message
+// The DataElementCollection message is used by the DataGeneric message to encode the Data
+// and Attribute values
+message DataElementCollection {
+
+   // A repeated field representing each DataElement message in the data collection
+   repeated DataElement Elements = 1;
 }
 
-message Element {
-  double IndexStart = 1; // Hz
-  double IndexStop  = 2; // Hz
-  Trace TraceData   = 3;
+// The ThreadID message is used to uniquely identify and name a data thread eg. a stream or origin
+message ThreadID {
+
+   // A Guid String as a unique identifier thread
+   optional string GuidString = 2;
+
+   // A string name to associate with the thread
+   optional string Name = 3;
+
+   // A display color for the thread
+   optional uint32 ColorARGB = 4 [default = 0];
+
+   // A sub-stream 0-255 to associate with the stream threads
+   optional uint32 SubStream = 5;
+
+   // One or more content flags from an UInt32 field to associate with the stream threads
+   optional uint32 Content = 6;
 }
 
-message Trace {
-  YStore YDataStore = 1;
+// > The DataElement Message
+// The DataElement message is the basic container for each element of data within a DataGeneric
+// message. DataElements are usually stored in a DataElementCollection message.
+// A data element may be added to the Attributes or the Data part of a DataGeneric message
+message DataElement {
+
+   // An optional name string to be associated with the data element
+   optional string Name = 1;
+
+   // An optional Key to be associated with the data. The key value is an enum (see StandardKeys)
+   // associating a key value with the data allows for more efficient encoding, and also
+   // interrogation of a DataCollection to find data with a specific meaning while not being
+   // dependent on a string match.
+   optional StandardKeys Key = 2 [default = Not_Set];
+
+   // An optional numeric data type to associate with the data index (see the enum NumericDataType)
+   // Associating a numeric data type with an element allows data consumers to display and interpret data
+   // correctly without relying on string matching 
+
+   optional NumericDataType IndexUnits = 3 [default = Undefined];
+
+   // An optional double value start index to associate with the data (for array data)
+   optional double IndexStart = 4;
+
+   // An optional double value stop index to associate with the data (for array data)
+   optional double IndexStop = 5;
+
+   // The index data - index data may be implicit (equispaced with the data values and using the
+   // IndexStart and IndexStop values, or explicit as defined in the IndexDataStore(for scatter 
+   // values) - see the DataStorage message.
+   optional DataStorage IndexDataStore = 6;
+
+   // An optional numeric data type to associate with the data (see the enum NumericDataType)
+   // Associating a numeric data type with an element allows data consumers to display and interpret
+   // data correctly without relying on string matching 
+   optional NumericDataType DataUnits = 7 [default = Undefined];
+   // An enum indicating the message type of the data contained within the element 
+   // This is provided a convenience to allow switching on the data type and selecting the appropriate field
+   // in the following list without checking each for null
+   optional DataElementType ElementType = 9;
+   // the following represent sub-types; at most 1 should have a value
+
+   // Boolean value(s) - see the DataElementBools message
+   optional DataElementBools BoolData = 20;
+
+   // Color value(s) - see the DataElementColors message
+   optional DataElementColors ColorData = 22;
+
+   // Double value(s) - see the DataElementDoubles message
+   optional DataElementDoubles DoubleData = 24;
+
+   // Double Trace values -  see the DataElementTrace message
+   // supports efficient array compression options and real and complex data
+   optional DataElementTrace TraceData = 25;
+
+   // 2DDoubleArray values - see the DataElementDoubleArray2D message
+   // suitable for 2D heat maps etc - supports efficient array encoding options
+   optional DataElementDoubleArray2D Double2dData = 26;
+
+   // 2DIntArray values - see the DataElementIntArray2D message
+   // suitable for 2D heat maps etc
+   optional DataElementIntArray2D Int2dData = 36;
+
+   // 2DColorArray values - see the DataElementColorArray2D message
+   // suitable for 2D heat maps etc
+   optional DataElementColorArray2D Color2dData = 35;
+
+   // Int (signed 32 bit) value(s) - see the DataElementStrings message
+   optional DataElementInts IntData = 27;
+
+   // String value(s) - see the DataElementStrings message
+   optional DataElementStrings StringData = 28;
+
+   // UInt (unsigned 32 bit) value(s) - see the DataElementUInts message
+   optional DataElementUInts UIntData = 29;
+
+   // GUID value(s) - see the DataElementGuids message
+   optional DataElementGuids GuidData = 30;
+
+   // DataGeneric value(s) - see the DataElementDataGenerics message
+   // allows embedding of other 'data' and encoding of hierarchical data
+   optional DataElementDataGenerics EmbeddedDataGenericData= 31;
+
+   // Byte/Blob data  - see the DataElementBytes message
+   optional DataElementBytes ByteData= 32;
+
+   // A Collection of DataElements that are to be regarded as attributes of this DataElement
+   optional DataElementCollection ElementAttributes = 33;
 }
 
-message YStore {
-  DsDouble16 DsDouble16 = 1;
+// > The DataElementBools Message
+// The DataElementBools message is used by the DataElement message to encode single/multiple
+// boolean values.
+message DataElementBools {
+
+   // A repeated field representing each boolean value in the data
+   repeated bool Values = 1;
 }
 
+// > The DataElementColors Message
+// The DataElementColors message is used by the DataElement message to encode single/multiple
+// Color values as a 32bit unsigned integer in ARGB byte format.
+message DataElementColors {
+
+   // A repeated unsigned 32bit integer representing the Color of each value in the data encoded as ARGB bytes
+   repeated uint32 ColorsARGB = 1;
+}
+
+// > The DataElementDoubleArray2D Message
+// The DataElementDoubleArray2D message is used by the DataElement message to encode single/multiple
+// 2 dimensional double arrays. Data compression to 8,16 and 32 bit resolution is supported 
+message DataElementDoubleArray2D {
+
+   // An unsigned 32bit integer representing the width of the 2D array
+   // The height of the 2D array may be found by dividing the length of the data contained within the
+   // DataStore by the width
+   optional uint32 Width = 1 [default = 0];
+   // The stored data associated with the 2D double array - see the DataStorage message
+   // Data for the 2D double array is stored as a 1D double array and the Width parameter above is used
+   // to re-construct the 2D array 
+   optional DataStorage DataStore = 2;
+   optional NumericDataType XUnits = 3;
+   optional double XStart = 4;
+   optional double XStop = 5;
+   optional NumericDataType YUnits = 6;
+   optional double YStart = 7;
+   optional double YStop = 8;
+}
+
+// > The DataElementIntArray2D Message
+// The DataElementInArray2D message is used by the DataElement message to encode single/multiple
+// 2 dimensional int arrays.
+message DataElementIntArray2D {
+
+   // An unsigned 32bit integer representing the width of the 2D array
+   // The height of the 2D array may be found by dividing the length of the data contained within the
+   // DataStore by the width
+   optional uint32 Width = 1 [default = 0];
+   // The stored data associated with the 2D int array
+   // Data for the 2D int array is stored as a 1D int array and the Width parameter above is used
+   // to re-construct the 2D array 
+   optional NumericDataType XUnits = 3;
+   optional double XStart = 4;
+   optional double XStop = 5;
+   optional NumericDataType YUnits = 6;
+   optional double YStart = 7;
+   optional double YStop = 8;
+}
+
+// > The DataElementColorArray2D Message
+// The DataElementColorArray2D message is used by the DataElement message to encode single/multiple
+// 2 dimensional color arrays. Each color stored as uints representing ARGB byte values. 
+message DataElementColorArray2D {
+
+   // An unsigned 32bit integer representing the width of the 2D array
+   // The height of the 2D array may be found by dividing the length of the data contained within the
+   // data by the width
+   optional uint32 Width = 1 [default = 0];
+   optional NumericDataType XUnits = 3;
+   optional double XStart = 4;
+   optional double XStop = 5;
+   optional NumericDataType YUnits = 6;
+   optional double YStart = 7;
+   optional double YStop = 8;
+}
+
+// > The DataElementDoubles Message
+// The DataElementDoubles message is used by the DataElement message to encode single/multiple
+// double values in 64Bit IEEE format
+message DataElementDoubles {
+
+   // A repeated field indicating each double value in the data
+   repeated double Values = 1;
+}
+
+// > The DataElementGuids Message
+// The DataElementGuids message is used by the DataElement message to encode single/multiple
+// GUID values
+message DataElementGuids {
+
+   // A repeated field indicating each GUID value in the data
+   repeated string GuidStrings = 2;
+}
+
+// > The DataElementInts Message
+// The DataElementInts message is used by the DataElement message to encode single/multiple
+// 32 bit signed integer values
+message DataElementInts {
+
+   // A repeated field indicating each int32 value in the data
+   repeated int32 Values = 1;
+}
+
+// > The DataElementStrings Message
+// The DataElementStrings message is used by the DataElement message to encode single/multiple
+// UTF8 encoded string values
+message DataElementStrings {
+
+   // A repeated field indicating each string value in the data
+   repeated string Values = 1;
+
+   // The DataElementGuids message is used by the DataElement message to encode single/multiple
+   optional TextFunction TextFunction = 2 [default = UndefinedText];
+}
+
+// > The DataElementTrace Message
+// The DataElementTrace message is used by the DataElement message to encode single/multiple
+// real and complex double arrays. Data compression to 8,16 and 32 bit resolution is supported 
+// Using the TraceType indicator other data such as Mag/Ang, Center/Span and Start/Stop can also be stored
+message DataElementTrace {
+
+   // The encoded stored Y data - see the DataStorage message
+   optional DataStorage YDataStore = 2;
+
+   // The encoded stored Z data - see the DataStorage message
+   optional DataStorage ZDataStore = 3;
+
+   // An optional numeric data type to associate with the data (see the enum NumericDataType)
+   // Associating a numeric data type with an element allows data consumers to display and interpret
+   // data correctly without relying on string matching 
+   optional NumericDataType ZUnits = 4 [default = Undefined];
+
+   // An optional trace data type indicator to associate with the data trace (see the enum ElementTraceType)
+   // This type indicator allows the DataElementTrace message to store Complex I/Q, Mag/Ang, Center/Span and 
+   // Start/Stop data types
+   optional ElementTraceType TraceType = 5 [default = Real];
+}
+
+// > The DataElementUInts Message
+// The DataElementUInts message is used by the DataElement message to encode single/multiple
+// 32 bit unsigned integer values
+message DataElementUInts {
+
+   // A repeated field indicating each uint32 value in the data
+   repeated uint32 Values = 1;
+}
+
+// > The DataElementDataGenerics Message
+// The DataElementDataGenerics message is used by the DataElement message to encode single/multiple
+// embedded DataGeneric messages. This allows a DataGeneric message to represent hierarchical data
+message DataElementDataGenerics {
+
+   // A repeated field indicating each DataGeneric value in the data
+   repeated DataGeneric Values = 1;
+}
+
+// > The DataElementDataBytes Message
+// The DataElementDataBytes message is used by the DataElement message to encode single/multiple
+// embedded arbitrary binary data. 
+message DataElementBytes {
+
+   // A field containing the binary data
+   optional ByteDataContentType ContentType = 1 [default = blob];
+
+   // A field containing the binary data
+   optional string Description = 2;
+
+   // A field containing the binary data
+   optional bytes Values = 3;
+}
+
+// > The DataStorage Message
+// The DataStorage message allows arrays of floating point double data to 
+// be encoded flexibly and efficiently in an appropriate way for each item of data.
+// When storage in the native 64bit double format is not required then the data array
+// may be encoded to 8bit,16bit or 32bit per entry according to preference.
+// This is achieved by recording the minimum and maximum values of the data as doubles
+// and then 'stretching' the dynamic range of the chosen storage format across this range
+message DataStorage {
+
+   // An enum indicating the storage format - this can be used in a switch statment
+   // when interpreting the data so as to know which of the following fields have a value
+   // without having to check each for null
+
+   // An enum indicating the storage type of the data contained within the message 
+   // This is provided a convenience to allow switching on the storage type and selecting the appropriate field
+   // in the following list without checking each for null
+   optional DataStorageFormats StorageFormat = 39;
+
+   // the following represent sub-types; at most 1 should have a value
+
+   // Storage as 64bit IEEE floating point format - see the DsDouble Message
+   optional DsDouble DsDouble = 43;
+
+   // Storage as 8 bit scaled format - see the DsDouble8 Message
+   optional DsDouble8 DsDouble8 = 44;
+
+   // Storage as 16 bit scaled format - see the DsDouble16 Message
+   optional DsDouble16 DsDouble16 = 45;
+
+   // Storage as 32 bit scaled format - see the DsDouble32 Message
+   optional DsDouble32 DsDouble32 = 46;
+
+   // Storage as 32bit IEEE Float format - see the DsFloat Message
+   optional DsFloat DsFloat = 47;
+}
+
+// > The DsDouble Message
+// Storage as 64bit IEEE double format - data is stored directly as a 64 bit double
+message DsDouble {
+
+   // A repeated field representing each double value in the data
+   repeated double Data = 1;
+}
+
+// > The DsDouble16 Message
+// Storage as 16 bit scaled format - data is stored as 16 bits per double value
+// This is achieved by recording the minimum and maximum values of the data as doubles
+// and then 'stretching' the dynamic range of the chosen storage format across 16 bits
 message DsDouble16 {
-  bytes Bytes = 1; // little-endian uint16 codes
-  double Min = 2;  // dB min
-  double Max = 3;  // dB max
+
+   // A repeated field representing each double value in the data encoded to 16bits
+   optional bytes Bytes = 1;
+
+   // The maximum double value in the original double array data - stored as a 64 bit double
+   optional double Max = 2 [default = 0];
+
+   // The minimum double value in the original double array data - stored as a 64 bit double
+   optional double Min = 3 [default = 0];
+}
+
+// > The DsDouble32 Message
+// Storage as 32 bit scaled format - data is stored as 32 bits per double value
+// This is achieved by recording the minimum and maximum values of the data as doubles
+// and then 'stretching' the dynamic range of the chosen storage format across 32 bits
+message DsDouble32 {
+
+   // A repeated field representing each double value in the data encoded to 32bits
+   optional bytes Bytes = 1;
+
+   // The maximum double value in the original double array data - stored as a 64 bit double
+   optional double Max = 2 [default = 0];
+
+   // The minimum double value in the original double array data - stored as a 64 bit double
+   optional double Min = 3 [default = 0];
+}
+
+// > The DsDouble8 Message
+// Storage as 8 bit scaled format - data is stored as 8 bits per double value
+// This is achieved by recording the minimum and maximum values of the data as doubles
+// and then 'stretching' the dynamic range of the chosen storage format across 8 bits
+message DsDouble8 {
+
+   // A repeated field representing each double value in the data encoded to 8bits
+   optional bytes Bytes = 1;
+
+   // The maximum double value in the original double array data - stored as a 64 bit double
+   optional double Max = 2 [default = 0];
+
+   // The minimum double value in the original double array data - stored as a 64 bit double
+   optional double Min = 3 [default = 0];
+}
+
+// > The DsFloat Message
+// Storage as 32 bit  float format - data is stored as 32 bits per double value
+message DsFloat {
+
+   // A repeated field representing each double value represented as a 32bit float
+   repeated float Values = 1;
+}
+
+// > The ElementTraceType Enum
+// The ElementTraceType enum is used to indicate the trace type for a DataElementTrace
+// Using this information a DataElementTrace can be used to store other data types
+// such as Complex I/Q, Mag/Ang, and also ranges such as Start/Stop and Center/Span
+enum ElementTraceType {
+   Real = 0;
+   IQ = 1;
+   MagAngDeg = 2;
+   MagAngRad = 3;
+   StartStop = 4;
+   CenterSpan = 5;
+}
+
+// > The NumericDataType Enum
+// The NumericDataType enum is used for indicating the data units for numeric data
+// Using this enum data consumers can filter and interpret data in a reliable way
+// without relying on string matching
+enum NumericDataType {
+   Undefined = 0;
+   Frequency_Hz = 100;
+   Time_sec = 101;
+   UnixTime_sec = 102;
+   Power_dBm = 103;
+   Power_W = 104;
+   Angle_deg = 105;
+   Angle_rad = 106;
+   Ratio_dB = 107;
+   Percentage = 108;
+   Voltage_V = 109;
+   Current_A = 110;
+   Correlation = 111;
+   LatitudeDeg = 112;
+   LongitudeDeg = 113;
+   Altitude_m = 114;
+   Distance_m = 115;
+   Speed_mh = 116;
+   FieldStrength_dBuVm = 117;
+   Voltage_dBuV = 118;
+   Bearing_deg = 119;
+   Bearing_rad = 120;
+   PCMAudio_codes = 121;
+   DigitalData_bits = 122;
+   HeatMap = 123;
+   Pixels_pix = 124;
+   Pitch_deg = 125;
+   Elevation_deg = 126;
+   Roll_deg = 127;
+   Elevation_rad = 128;
+   Bytes_B = 129;
+   Opacity_Percent = 130;
+   GUID_string = 131;
+   Color_ARGB = 132;
+   PropagationLoss_dB_mtr = 133;
+   AntennaGain_dBi = 134;
+   BitRate_bps = 135;
+   AlphaLevel = 136;
+   Speed_ms = 137;
+   Speed_kph = 138;
+   Speed_mph = 139;
+   Speed_knots = 140;
+   VerticalSpeed_ftpm = 141;
+   Altitude_ft = 142;
+   Hitcount = 143;
+   Time_ns = 144;
+   AntennaFactor_dB_mtr = 145;
+   Power_Spectral_Density_W_Hz = 146;
+   Decay_dB_sec = 147;
+   Point_pt = 148;
+   Temperature_degC = 149;
+   Acceleration_mss = 150;
+   RateOfTurn_deg_sec = 151;
+   Sweep_rate_Hz_sec = 152;
+   Distance_ft = 153;
+   Angle_min = 154;
+   Angle_sec = 155;
+   Bandwidth_Hz = 156;
+}
+
+// > The StandardKeys Enum
+// The StandardKeys enum is used for indicating the data function of a data element
+// Using this enum data consumers can filter and interpret data in a reliable way
+// without relying on string matching
+enum StandardKeys {
+   Not_Set = 0;
+   Network_HostName = 1;
+   Network_IPAddress = 2;
+   Network_Port = 3;
+   User_Data = 5;
+   VirtualTx = 6;
+   Status_Enabled = 10;
+   Status_SourceChanging = 11;
+   Status_Alert = 12;
+   Status_Error = 13;
+   Status_Warning = 14;
+   Data_GUID = 18;
+   Data_LifetimeSeconds = 19;
+   Data_Version = 20;
+   Data_Name = 21;
+   Data_Color = 22;
+   Data_ColorGradient = 23;
+   Data_TimeStamp = 24;
+   Data_Clear = 25;
+   Data_Static = 26;
+   Data_Decimation = 27;
+   Data_IntegerData = 28;
+   Data_Scrolling = 29;
+   Data_NominalCenter = 30;
+   Data_RepeatNumber = 31;
+   Data_SampleTime = 32;
+   Data_Trace = 33;
+   Data_XData = 34;
+   Data_YData = 35;
+   Data_ZData = 36;
+   Data_XSpan = 37;
+   Data_YSpan = 38;
+   Data_ZSpan = 39;
+   Data_Gate = 40;
+   Data_EndOfFile = 41;
+   Data_Shared_Indices = 42;
+   Data_Magnitude = 43;
+   Data_Angle = 44;
+   Data_Resolution = 45;
+   Data_AntennaType = 46;
+   Data_Duration = 47;
+   Data_Detector = 48;
+   Data_ResultCount = 49;
+   Data_StandardDeviation = 50;
+   Data_IndicatorText = 51;
+   Data_IndicatorColor = 52;
+   Data_IndicatorShape = 53;
+   Data_IndicatorSize = 54;
+   Data_IndicatorRotation = 55;
+   Data_IndicatorImageKey = 56;
+   Data_Description = 57;
+   Data_Indicators = 58;
+   Data_VideoBandwidth = 59;
+   Record_Destinations = 60;
+   Record_TimeStamp = 61;
+   Data_IndicatorAlpha = 62;
+   Data_ContentIndicator = 63;
+   Data_ToolTip = 64;
+   Data_IndicatorBorderColor = 65;
+   Data_IndicatorDrawPriority = 66;
+   Data_IndicatorTooltipColor = 67;
+   Data_IndicatorRangeMin = 68;
+   Data_IndicatorRangeMax = 69;
+   Data_IndicatorLineStyle = 70;
+   GsmDemod_ARFCN = 71;
+   GsmDemod_TSC = 72;
+   GsmDemod_ChannelFrequency = 73;
+   Data_Colorization = 74;
+   Thread_OriginName = 80;
+   Thread_OriginGuid = 81;
+   Thread_StreamName = 82;
+   Thread_StreamGuid = 83;
+   Thread_ProviderName = 84;
+   Thread_ProviderGuid = 85;
+   Thread_EndOfStream = 86;
+   Thread_EndOfOrigin = 87;
+   Thread_OriginColor = 88;
+   Thread_StreamColor = 89;
+   Location_Altitude = 90;
+   Location_Heading = 91;
+   Location_Speed = 92;
+   Location_Latitude = 93;
+   Location_Longitude = 94;
+   Location_GpsFix = 95;
+   Location_GpsSatelites = 96;
+   Location_GpsStatus = 97;
+   Location_GpsTime = 98;
+   Location_LatitudeNorth = 99;
+   Location_LatitudeSouth = 100;
+   Location_LongitudeWest = 101;
+   Location_LongitudeEast = 102;
+   Location_NorthOffset = 103;
+   Location_Pitch = 104;
+   Location_Roll = 105;
+   AOA_Average_Bearing = 106;
+   AOA_EMA_Bearing = 107;
+   Location_GPS_Holdover_Active = 108;
+   AOA_AntennaRatio = 109;
+   AOA_Bearing = 110;
+   AOA_BearingDeviation = 111;
+   AOA_Gated_Bearing = 112;
+   AOA_SNRdB = 113;
+   AOA_HitCount = 114;
+   AOA_QualityPercent = 115;
+   AOA_SystematicDeviation = 116;
+   AOA_Elevation = 118;
+   AOA_ElevationDeviation = 119;
+   MaskBreak_Start = 120;
+   MaskBreak_Stop = 121;
+   MaskBreak_Center = 122;
+   MaskBreak_Span = 123;
+   MaskBreak_Threshold = 124;
+   MaskBreak_Power = 125;
+   Mask_Trace = 126;
+   Mask_Dynamic_Offset = 127;
+   Mask_Start_Frequency = 128;
+   Mask_Stop_Frequency = 129;
+   DataBase_Match = 130;
+   DataBase_FileName = 131;
+   Occupancy_Min = 132;
+   Occupancy_Max = 133;
+   Occupancy_Threshold = 134;
+   Occupancy_Relative_Noise_Floor = 135;
+   Occupancy_Threshold_Units = 136;
+   Occupancy_Analysis_Type = 137;
+   MaskBreak_Snr = 138;
+   MaskBreak_IntegratedPower = 139;
+   GeoLocation_Latitude = 140;
+   GeoLocation_Longitude = 141;
+   GeoLocation_Confidence = 142;
+   GeoLocation_RadiatedPower = 143;
+   GeoLocation_Snr = 144;
+   Analysis_Center = 145;
+   Analysis_Span = 146;
+   Analysis_Processor = 147;
+   Analysis_ProcessType = 148;
+   Analysis_Nodes = 149;
+   Squelch_ThresholdExceeded = 150;
+   Analysis_TargetID = 151;
+   Analysis_Data = 152;
+   Analysis_ResultID = 153;
+   Analysis_NodeGroup = 154;
+   Analysis_MasterNodes = 155;
+   Analysis_TargetSpeed = 156;
+   Analysis_MaxPower_Node = 157;
+   Analysis_MaxPower = 158;
+   Analysis_TerrainHeight = 159;
+   HeatMap_Data = 160;
+   HeatMap_WidthPixels = 161;
+   HeatMap_HeightPixels = 162;
+   HeatMap_WidthMeters = 163;
+   HeatMap_HeightMeters = 164;
+   HeatMap_AmplitudeScale = 165;
+   HeatMap_MinValue = 166;
+   HeatMap_MaxValue = 167;
+   HeatMap_AverageValue = 168;
+   HeatMap_TransparencyValue = 169;
+   HeatMap_Elevation = 170;
+   HeatMap_ElevationOffset = 171;
+   PCM_Conversion_Gain = 180;
+   Analysis_Aperture = 181;
+   Analysis_Highlight = 182;
+   Analysis_Annotation = 183;
+   Analysis_Result_Flags = 184;
+   Uncertainty_Center_Latitude = 190;
+   Uncertainty_Center_Longitude = 191;
+   Uncertainty_Major_Axis = 192;
+   Uncertainty_Minor_Axis = 193;
+   Uncertainty_Rotation = 194;
+   Uncertainty_Altitude_Above = 195;
+   Uncertainty_Altitude_Below = 196;
+   Uncertainty_Confidence = 197;
+   Display_LineThickness = 200;
+   Display_VectorStyle = 201;
+   Display_TraceUnderFill = 202;
+   Display_TracePaletteSteps = 203;
+   Display_TracePaletteMin = 204;
+   Display_TracePaletteMax = 205;
+   Data_IndicatorTextJustify = 210;
+   Data_IndicatorLabelAlwaysVisible = 211;
+   Data_IndicatorIconColor = 212;
+   Data_IndicatorHeadingColor = 213;
+   Data_IndicatorLabelNotOnHover = 214;
+   Data_Indicator_Border_Style = 215;
+   Data_Indicator_Charts_Override_Colour_Alpha = 216;
+   Data_Row_Units = 250;
+   Data_Row_Min = 251;
+   Data_Row_Max = 252;
+   Data_Col_Units = 253;
+   Data_Col_Min = 254;
+   Data_Col_Max = 255;
+   Intercept_FirstBreak = 260;
+   Intercept_LastBreak = 261;
+   Intercept_MaxBreakPower = 262;
+   Intercept_CurrentBreakPower = 263;
+   Intercept_TotalHitCount = 264;
+   Intercept_LastHitCount = 265;
+   Intercept_LastSignalStart = 266;
+   Intercept_SignalBreakDuration = 267;
+   NCP_PacketFormat = 300;
+   NCP_PacketType = 301;
+   NCP_PacketTime = 302;
+   NCP_PacketSourceId = 303;
+   NCP_PacketId = 304;
+   NCP_PacketError = 305;
+   NCP_PacketWarning = 306;
+   NCP_FieldType = 307;
+   NCP_FieldId = 308;
+   NCP_FieldError = 309;
+   NCP_FieldWarning = 310;
+   NCP_FieldAck = 311;
+   NCP_ParameterKey = 312;
+   NCP_Packet = 314;
+   NCP_RawPacket = 315;
+   NCP_StatusRecords = 316;
+   NCP_FieldNameKey = 317;
+   Demodulation_FMDeviationHz = 400;
+   Demodulation_FMFrequencyOffsetHz = 401;
+   Demodulation_FMCenterFrequencyHz = 402;
+   Demodulation_AMModulationIndexPercent = 410;
+   Demodulation_AMCarrierFrequencyHz = 411;
+   Data_Segment_Number = 412;
+   Data_Number_Of_Segments = 413;
+   Data_Processing_Loop_Count = 414;
+   Data_Spectrum = 415;
+   Data_IQTime = 416;
+   Data_PCM_Audio = 417;
+   Data_WideBandDetector = 418;
+   Data_FrequencyChannelOccupancy = 419;
+   Data_Pseudo_Trace = 420;
+   Data_Noise_Floor = 421;
+   Data_Array_Offset = 422;
+   Data_Integrated_Power = 423;
+   Data_Synchronized = 424;
+   Data_SWH = 425;
+   Data_Classification = 426;
+   Data_Decision_Confidence = 427;
+   Data_Decision_Level = 428;
+   Data_Not_For_Maps = 429;
+   Data_Not_For_Recording = 430;
+   Data_Antenna_Factor = 431;
+   Data_Radio_Gain = 432;
+   Data_AGC_Attenuation = 433;
+   Data_No_Results = 434;
+   Data_Integrated_Field = 435;
+   Data_Validity_Flags = 436;
+   Data_Occupancy_Masks = 437;
+   Data_Sync_Operation = 438;
+   Data_Internal_Only = 439;
+   Data_Is_Compressed = 440;
+   Noise_Floor_Ref_Level = 441;
+   Data_Calibration = 442;
+   Data_Accumulation_Count = 443;
+   Data_Input_Port = 447;
+   Data_AGC_Mode = 448;
+   Data_Manual_Attenuation = 449;
+   Trigger_Missed_Triggers = 450;
+   Trigger_Margin = 451;
+   Trigger_Mode = 452;
+   Missed_Data_Processors = 453;
+   System_Exception = 500;
+   Bin_ThreadId = 501;
+   Bin_DataType = 502;
+   Event_Type = 600;
+   Event_Source = 601;
+   Event_Data_ID = 602;
+   Event_Frequency_Center = 610;
+   Event_Frequency_Span = 611;
+   Event_Power = 612;
+   Event_Capture_Center = 613;
+   Event_Capture_Span = 614;
+   Event_Status = 615;
+   Event_Range_Center = 616;
+   Event_Range_Span = 617;
+   ADSB_CallSign = 700;
+   ADSB_Latitude = 701;
+   ADSB_Longitude = 702;
+   ADSB_Altitude = 703;
+   ADSB_Speed = 704;
+   ADSB_Bearing = 705;
+   ADSB_VerticalSpeed = 706;
+   ADSB_ICAO_Address = 707;
+   ADSB_Origin = 708;
+   ADSB_OriginName = 709;
+   ADSB_MessageData = 710;
+   ADSB_MessageTypeCode = 711;
+   ADSB_VelocityTimestamp = 712;
+   ADSB_PositionTimestamp = 713;
+   ADSB_Timestamp = 714;
+   AIS_MMSI = 715;
+   Signal_Origin = 720;
+   Signal_OriginName = 721;
+   Signal_StartTime = 722;
+   Signal_Duration = 723;
+   Signal_Buffer_Duration = 724;
+   Signal_Detector_Id = 725;
+   Signal_Detect_Level = 726;
+   Signal_Decoded_Data = 727;
+   Signal_Detect_Timestamp = 728;
+   Signal_Detector_NCP_Name = 729;
+   Signal_SNR = 730;
+   Signal_Power = 731;
+   Signal_Detector_Name = 732;
+   Signal_Bandwidth = 733;
+   Signal_Center = 734;
+   Signal_Pulse_SNR = 735;
+   Signal_Flags = 736;
+   Signal_Detection_Task = 737;
+   Process_Type = 750;
+   Process_CPU_Time = 751;
+   Process_Wall_Time = 752;
+   Process_Pulse_Count = 753;
+   Json_Debug_Info = 754;
+   Classifier_Pulse_Count = 800;
+   Classifier_Pulse_Pattern = 801;
+   Classifier_Pulse_Rep_Freq_Nominal = 802;
+   Classifier_Pulse_Rep_Rel_Freq_Jitter = 803;
+   Classifier_Pulse_Width_Mean = 804;
+   Classifier_Pulse_Width_Rsd = 805;
+   Classifier_Pulse_Power_Mean = 806;
+   Classifier_Pulse_Power_Rsd = 807;
+   Classifier_Burst_Count_Tested = 808;
+   Classifier_Burst_Type = 809;
+   Classifier_Signal_Type = 850;
+   Classifier_Alt_Signal_Type = 851;
+   Classifier_Start_Time = 852;
+   Classifier_Center_Frequency = 853;
+   Classifier_Parent_Index = 854;
+   Classifier_Flags = 855;
+   Classifier_Pulse_Duration = 856;
+   Classifier_Bandwidth = 857;
+   Classifier_Average_Power = 858;
+   Classifier_Signal_Noise_Ratio = 859;
+   Classifier_Frequency_Error = 860;
+   Classifier_Local_Noise_Floor = 861;
+   Classifier_Probability = 862;
+   Classifier_Alt_Probability = 863;
+   Classifier_Pulse_ID = 864;
+   Classifier_Pulse_Reference_Time = 865;
+   Classifier_Symbol_Rate = 866;
+   Survey_Bin_Resolution = 900;
+   Survey_Bandwidth_Calculation_Type = 901;
+   Survey_Capture_Count = 902;
+   Survey_First_Detected = 903;
+   Survey_Last_Detected = 904;
+   Survey_Detection_Capture_Ratio = 905;
+   Survey_Peak_Power = 906;
+   Survey_Peak_Field = 907;
+   Survey_Peak_Mean_Ratio = 908;
+   Survey_Duration = 909;
+   Survey_AOA_Confidence = 910;
+   Survey_Modulation_Profile = 911;
+   Survey_Power_Profile = 912;
+   Survey_Confidence = 913;
+   Scale_Factor = 914;
+   Precision_Nano_Time = 915;
+   Data_Time_Wide_Capture = 916;
+   Data_Time_Stripe_Width = 917;
+}
+
+// > The EventType Enum
+// The EventType enum is used to indicate the presence and type of an event
+// Using this enum data consumers can filter and interpret data in a reliable way
+// without relying on string matching
+enum EventType {
+   Unknown = 0;
+   Mask_Break = 100;
+   Integrated_Power = 101;
+   Signal_Detection = 102;
+}
+
+// > The TextFunction Enum
+// The TextFunction enum is used for indicating the text function of a text data element
+// Using this enum data consumers can filter and interpret data in a reliable way
+// without relying on string matching
+enum TextFunction {
+   UndefinedText = 0;
+   GeneralText = 1;
+   Information = 2;
+   Warning = 3;
+   Error = 4;
+   Alert = 5;
+   Debug = 6;
+}
+
+// > The DataVolatility Enum
+// The DataVolatility enum is used for indicating the volatility data element
+// Using this enum, data consumers can decide how to treat data based on the data characteristics
+// e.g. Dynamic data such as a spectrum is likely to be rapidly updating and may be treated as such by a display
+// Static data such as a map overlay will only change whenever the underlying query into the data is changed
+enum DataVolatility {
+   Dynamic = 0;
+   Static = 1;
+}
+
+// > The DataElementType Enum
+// The DataElementType enum is used for indicating the data element subtype that is present in a DataElement
+enum DataElementType {
+   UndefinedType = 0;
+   Bools = 1;
+   Colors = 2;
+   Doubles = 3;
+   DoubleArray2D = 4;
+   Guids = 5;
+   Ints = 6;
+   Uints = 7;
+   Strings = 8;
+   DoubleTrace = 9;
+   DataGenerics = 10;
+   Bytes = 11;
+   Longs = 12;
+   ColorArray2D = 13;
+   IntArray2D = 14;
+}
+
+// > The DataStorageFormats Enum
+// The DataStorageFormats enum is used for indicating the data storage subtype that is present in a DataStorage
+enum DataStorageFormats {
+   Default = 0;
+   Original = 1;
+   ObfuscatedText = 2;
+   _8Bit = 3;
+   _16Bit = 4;
+   _32Bit = 5;
+   _64Bit = 6;
+}
+
+// > The ByteDataContentType Enum
+// The ByteDataContentType enum is used for indicating the byte data content type in a DataElementBytes
+enum ByteDataContentType {
+   blob = 0;
+   image_png = 1;
+   image_gif = 2;
+   image_bmp = 3;
+   image_jpg = 4;
+   audio_mp3 = 5;
+   audio_wav = 6;
+   ncp_packet = 7;
 }
