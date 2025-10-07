@@ -5,6 +5,7 @@ import TracePlot from '../../components/TracePlot';
 import Waterfall from '../../components/Waterfall';
 import PeakControls from '../../components/PeakControls';
 import MarkersPanel from '../../components/MarkersPanel';
+import BandsSidebar from '../../components/BandsSidebar';
 import type { Marker, PeakItem, SummaryResponse } from '../../lib/api';
 import { getMarkers, getSummary, saveMarkers } from '../../lib/api';
 
@@ -15,6 +16,7 @@ export default function BandDetailPage() {
   const [peaks, setPeaks] = useState<PeakItem[]>([]);
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [freqWindow, setFreqWindow] = useState<{ f0?: number; f1?: number }>({});
+  const [wfBounds, setWfBounds] = useState<{ f0: number; f1: number; t0: number; t1: number } | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -91,7 +93,9 @@ export default function BandDetailPage() {
   ];
 
   return (
-    <main className="band-shell">
+    <div style={{ display: 'flex' }}>
+      <BandsSidebar />
+      <main className="band-shell" style={{ flex: 1 }}>
       <header className="band-header">
         <div>
           <p className="eyebrow">RF Spectrum Explorer</p>
@@ -143,7 +147,14 @@ export default function BandDetailPage() {
               </div>
             </div>
             <div className="panel-body panel-body--tall">
-              <TracePlot freqs={summary.freqs} curves={curves} peaks={peaks} markers={markers} onZoom={handleZoom} />
+              <TracePlot
+                freqs={summary.freqs}
+                curves={curves}
+                peaks={peaks}
+                markers={markers}
+                onZoom={handleZoom}
+                xRange={wfBounds ? { f0: wfBounds.f0, f1: wfBounds.f1 } : undefined}
+              />
             </div>
           </section>
           <section className="panel-card panel-card--waterfall" id="waterfall">
@@ -158,7 +169,7 @@ export default function BandDetailPage() {
               </div>
             </div>
             <div className="panel-body panel-body--tall">
-              <Waterfall bandId={id} f0={freqWindow.f0} f1={freqWindow.f1} />
+              <Waterfall bandId={id} f0={freqWindow.f0} f1={freqWindow.f1} onBoundsChange={setWfBounds} />
             </div>
           </section>
           <section className="panel-card panel-card--peaks" id="peaks">
@@ -196,7 +207,8 @@ export default function BandDetailPage() {
           </section>
         </div>
       </div>
-    </main>
+      </main>
+    </div>
   );
 }
 

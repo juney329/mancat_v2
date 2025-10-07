@@ -53,8 +53,34 @@ def _encode_png(tile: np.ndarray) -> bytes:
     if max_val - min_val < 1e-6:
         max_val = min_val + 1e-6
     norm = (data - min_val) / (max_val - min_val)
+
+    # Build a LUT for black→blue→green→yellow→orange→red
+    stops = [
+        (0.0, (0, 0, 0)),        # black
+        (0.2, (0, 0, 255)),      # blue
+        (0.4, (0, 255, 0)),      # green
+        (0.6, (255, 255, 0)),    # yellow
+        (0.8, (255, 165, 0)),    # orange
+        (1.0, (255, 0, 0)),      # red
+    ]
+    levels = 256
+    xs = np.array([s for s, _ in stops], dtype=np.float32)
+    cs = np.array([c for _, c in stops], dtype=np.float32)
+    lut = np.zeros((levels, 3), dtype=np.uint8)
+    for i in range(levels):
+        t = i / (levels - 1)
+        j = int(np.max(np.where(xs <= t))) if np.any(xs <= t) else 0
+        k = min(j + 1, len(xs) - 1)
+        denom = float(xs[k] - xs[j]) if xs[k] != xs[j] else 1.0
+        a = float((t - xs[j]) / denom)
+        col = (1.0 - a) * cs[j] + a * cs[k]
+        lut[i] = np.clip(col, 0, 255).astype(np.uint8)
+
+    idx = np.clip((norm * (levels - 1)).astype(np.int32), 0, levels - 1)
+    rgb = lut[idx]
+
     buf = io.BytesIO()
-    img = Image.fromarray(np.clip(norm * 255.0, 0, 255).astype(np.uint8), mode="L")
+    img = Image.fromarray(rgb, mode="RGB")
     img.save(buf, format="PNG")
     return buf.getvalue()
 

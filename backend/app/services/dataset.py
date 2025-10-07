@@ -39,7 +39,9 @@ class BandDataset:
     @property
     def meta(self) -> Mapping[str, object]:
         if self._meta is None:
-            path = self.root / f"meta_{self.band_id}.json"
+            primary = self.root / f"meta_{self.band_id}.json"
+            fallback = self.root / f"meta_band{self.band_id}.json"
+            path = primary if primary.exists() else fallback
             with path.open("r", encoding="utf-8") as fh:
                 self._meta = json.load(fh)
         return self._meta
@@ -48,21 +50,27 @@ class BandDataset:
     @property
     def freqs(self) -> np.ndarray:
         if self._freqs is None:
-            path = self.root / f"freqs0_{self.band_id}.npy"
+            primary = self.root / f"freqs0_{self.band_id}.npy"
+            fallback = self.root / f"freqs0_band{self.band_id}.npy"
+            path = primary if primary.exists() else fallback
             self._freqs = np.load(path)
         return self._freqs
 
     @property
     def times(self) -> np.ndarray:
         if self._times is None:
-            path = self.root / f"rel_t_{self.band_id}.npy"
+            primary = self.root / f"rel_t_{self.band_id}.npy"
+            fallback = self.root / f"rel_t_band{self.band_id}.npy"
+            path = primary if primary.exists() else fallback
             self._times = np.load(path)
         return self._times
 
     @property
     def summary(self) -> Mapping[str, np.ndarray]:
         if self._summary is None:
-            path = self.root / f"summary_{self.band_id}.npz"
+            primary = self.root / f"summary_{self.band_id}.npz"
+            fallback = self.root / f"summary_band{self.band_id}.npz"
+            path = primary if primary.exists() else fallback
             archive = np.load(path)
             self._summary = {key: archive[key] for key in archive.files}
         return self._summary
@@ -72,7 +80,9 @@ class BandDataset:
         explicit_path = self.meta.get("waterfall_path")
         if isinstance(explicit_path, str):
             return Path(explicit_path)
-        return self.root / f"waterfall_band{self.band_id}.dat"
+        # Normalize id if it includes a legacy "band" prefix
+        band_num = self.band_id[4:] if str(self.band_id).startswith("band") else str(self.band_id)
+        return self.root / f"waterfall_band{band_num}.dat"
 
     def waterfall_shape(self) -> Tuple[int, int]:
         if self._waterfall_shape is not None:
@@ -231,9 +241,17 @@ class DatasetService:
 
     def available_bands(self) -> List[BandInfo]:
         bands: List[BandInfo] = []
-        pattern = "meta_*.json"
-        for meta_path in self.data_dir.glob(pattern):
-            band_id = meta_path.stem.replace("meta_", "")
+        seen: set[str] = set()
+        # Support both naming patterns; skip duplicates by band_id
+        for meta_path in list(self.data_dir.glob("meta_*.json")) + list(self.data_dir.glob("meta_band*.json")):
+            stem = meta_path.stem
+            if stem.startswith("meta_band"):
+                band_id = stem.replace("meta_band", "")
+            else:
+                band_id = stem.replace("meta_", "")
+            if band_id in seen:
+                continue
+            seen.add(band_id)
             dataset = self.get_band(band_id)
             bands.append(BandInfo(band_id=band_id, meta=dataset.meta))
         return sorted(bands, key=lambda info: info.band_id)

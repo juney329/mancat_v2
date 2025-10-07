@@ -12,9 +12,21 @@ export interface TracePlotProps {
   peaks?: PeakItem[];
   markers?: Marker[];
   onZoom?: (range: { f0: number; f1: number }) => void;
+  xRange?: { f0: number; f1: number } | null;
 }
 
-export function TracePlot({ freqs, curves, peaks = [], markers = [], onZoom }: TracePlotProps) {
+export function TracePlot({ freqs, curves, peaks = [], markers = [], onZoom, xRange }: TracePlotProps) {
+  // Compute a safe x-range intersected with data domain to avoid empty axis
+  const safeXRange = useMemo(() => {
+    if (!freqs || freqs.length === 0) return undefined;
+    const domainMin = freqs[0];
+    const domainMax = freqs[freqs.length - 1];
+    if (!xRange) return undefined;
+    const f0 = Math.max(domainMin, Math.min(domainMax, xRange.f0));
+    const f1 = Math.max(domainMin, Math.min(domainMax, xRange.f1));
+    if (f1 <= f0) return [domainMin, domainMax] as [number, number];
+    return [f0, f1] as [number, number];
+  }, [freqs, xRange]);
   const traces = useMemo(() => {
     const base: PlotData[] = Object.entries(curves).map(([name, values]) => ({
       x: freqs,
@@ -75,33 +87,65 @@ export function TracePlot({ freqs, curves, peaks = [], markers = [], onZoom }: T
 
     return {
       dragmode: 'zoom',
-      margin: { l: 50, r: 20, t: 30, b: 40 },
+      margin: { l: 56, r: 24, t: 64, b: 72 },
       paper_bgcolor: '#0c0d10',
       plot_bgcolor: '#0c0d10',
       font: { color: '#f7f7f7' },
-      xaxis: { title: 'Frequency (Hz)' },
-      yaxis: { title: 'Power (dB)' },
+      xaxis: {
+        title: 'Frequency (Hz)',
+        range: safeXRange,
+        showline: true,
+        mirror: true,
+        ticks: 'outside',
+        tickcolor: '#888',
+        ticklen: 6,
+        tickwidth: 1,
+        tickformat: '~s',
+        automargin: true
+      },
+      yaxis: {
+        title: 'Power (dB)',
+        autorange: true,
+        zeroline: false,
+        showline: true,
+        mirror: true,
+        automargin: true
+      },
       shapes,
-      showlegend: true
+      showlegend: true,
+      legend: {
+        orientation: 'h',
+        x: 0,
+        y: 1.08,
+        xanchor: 'left',
+        yanchor: 'bottom',
+        bgcolor: 'rgba(0,0,0,0)'
+      }
     } satisfies Partial<Layout>;
-  }, [markers]);
+  }, [markers, safeXRange]);
 
   const handleRelayout = useCallback(
     (event: Partial<Layout>) => {
+      const xAuto = (event as any)['xaxis.autorange'];
+      if (onZoom && xAuto === true && Array.isArray(freqs) && freqs.length > 1) {
+        onZoom({ f0: freqs[0], f1: freqs[freqs.length - 1] });
+        return;
+      }
       const x0 = (event as any)['xaxis.range[0]'];
       const x1 = (event as any)['xaxis.range[1]'];
       if (onZoom && typeof x0 === 'number' && typeof x1 === 'number') {
         onZoom({ f0: x0, f1: x1 });
       }
     },
-    [onZoom]
+    [onZoom, freqs]
   );
 
   return (
     <Plot
       data={traces}
       layout={layout}
-      style={{ width: '100%', height: '100%' }}
+      style={{ width: '100%', height: '520px', display: 'block' }}
+      useResizeHandler
       onRelayout={handleRelayout}
       config={{ displaylogo: false, responsive: true }}
     />

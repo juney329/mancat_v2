@@ -21,6 +21,12 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=[
+            "X-Time-Start",
+            "X-Time-End",
+            "X-Freq-Start",
+            "X-Freq-End",
+        ],
     )
 
     app.include_router(bands.router)
