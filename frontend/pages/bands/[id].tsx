@@ -4,9 +4,8 @@ import { useRouter } from 'next/router';
 import TracePlot from '../../components/TracePlot';
 import Waterfall from '../../components/Waterfall';
 import PeakControls from '../../components/PeakControls';
-import PlaybackBar from '../../components/PlaybackBar';
 import MarkersPanel from '../../components/MarkersPanel';
-import type { Marker, PeakItem, PlaybackTick, SummaryResponse } from '../../lib/api';
+import type { Marker, PeakItem, SummaryResponse } from '../../lib/api';
 import { getMarkers, getSummary, saveMarkers } from '../../lib/api';
 
 export default function BandDetailPage() {
@@ -16,7 +15,6 @@ export default function BandDetailPage() {
   const [peaks, setPeaks] = useState<PeakItem[]>([]);
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [freqWindow, setFreqWindow] = useState<{ f0?: number; f1?: number }>({});
-  const [timeWindow, setTimeWindow] = useState<{ t0?: number; t1?: number }>({});
 
   useEffect(() => {
     if (!id) return;
@@ -49,10 +47,6 @@ export default function BandDetailPage() {
     },
     [id]
   );
-
-  const handlePlaybackTick = useCallback((tick: PlaybackTick) => {
-    setTimeWindow({ t0: tick.t0, t1: tick.t1 });
-  }, []);
 
   const handleCreateMarker = useCallback(
     (marker: Marker) => {
@@ -89,10 +83,6 @@ export default function BandDetailPage() {
   const freqEnd = freqs[freqs.length - 1] ?? freqStart;
   const windowStart = freqWindow.f0 ?? freqStart;
   const windowEnd = freqWindow.f1 ?? freqEnd;
-  const playbackLabel =
-    timeWindow.t0 !== undefined && timeWindow.t1 !== undefined
-      ? `${timeWindow.t0.toFixed(2)}s → ${timeWindow.t1.toFixed(2)}s`
-      : 'Awaiting playback window';
   const overviewMetrics = [
     { label: 'Frequency Start', value: formatFrequency(freqStart) },
     { label: 'Frequency End', value: formatFrequency(freqEnd) },
@@ -106,11 +96,7 @@ export default function BandDetailPage() {
         <div>
           <p className="eyebrow">RF Spectrum Explorer</p>
           <h1>Band {id}</h1>
-          <p className="muted">Live composite traces and waterfall playback for the selected RF band.</p>
-        </div>
-        <div className="header-status">
-          <span className="badge badge--live">Live Feed</span>
-          <span className="muted">{playbackLabel}</span>
+          <p className="muted">Composite traces and a static waterfall overview for the selected RF band.</p>
         </div>
       </header>
       <div className="band-layout">
@@ -126,7 +112,6 @@ export default function BandDetailPage() {
               ))}
             </dl>
           </section>
-          <PlaybackBar bandId={id} onTick={handlePlaybackTick} className="sidebar-card" />
           <PeakControls
             bandId={id}
             curves={Object.keys(curves)}
@@ -160,16 +145,12 @@ export default function BandDetailPage() {
           <section className="panel-card panel-card--waterfall" id="waterfall">
             <div className="panel-header">
               <div>
-                <h2>Waterfall Playback</h2>
-                <p className="muted">Time-evolving energy density aligned to the current playback window.</p>
-              </div>
-              <div className="header-metric">
-                <span className="metric-label">Window</span>
-                <span className="metric-value">{playbackLabel}</span>
+                <h2>Waterfall Overview</h2>
+                <p className="muted">Static energy density heatmap for the current frequency selection.</p>
               </div>
             </div>
             <div className="panel-body panel-body--tall">
-              <Waterfall bandId={id} f0={freqWindow.f0} f1={freqWindow.f1} t0={timeWindow.t0} t1={timeWindow.t1} />
+              <Waterfall bandId={id} f0={freqWindow.f0} f1={freqWindow.f1} />
             </div>
           </section>
           <section className="panel-card panel-card--peaks" id="peaks">
