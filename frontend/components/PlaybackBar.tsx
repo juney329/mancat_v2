@@ -7,9 +7,10 @@ export interface PlaybackBarProps {
   windowSeconds?: number;
   fps?: number;
   onTick?: (tick: PlaybackTick) => void;
+  className?: string;
 }
 
-export function PlaybackBar({ bandId, windowSeconds = 10, fps = 4, onTick }: PlaybackBarProps) {
+export function PlaybackBar({ bandId, windowSeconds = 10, fps = 4, onTick, className }: PlaybackBarProps) {
   const [tick, setTick] = useState<PlaybackTick | null>(null);
 
   useEffect(() => {
@@ -24,25 +25,26 @@ export function PlaybackBar({ bandId, windowSeconds = 10, fps = 4, onTick }: Pla
     };
   }, [bandId, windowSeconds, fps, onTick]);
 
+  const classes = ['control-card', 'playback-card', className].filter(Boolean).join(' ');
+
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: '1rem',
-        alignItems: 'center',
-        background: '#1a1e2b',
-        padding: '0.75rem 1rem',
-        borderRadius: '0.75rem',
-        border: '1px solid rgba(255,255,255,0.1)'
-      }}
-    >
-      <strong>Playback</strong>
+    <div className={classes}>
+      <div className="card-title">Playback Window</div>
       {tick ? (
-        <span>
-          Window: {tick.t0.toFixed(2)}s → {tick.t1.toFixed(2)}s &nbsp;|&nbsp; Cursor UNIX: {tick.cursor_unix.toFixed(2)}
-        </span>
+        <div className="playback-details">
+          <span className="metric">
+            <span className="metric-label">Window</span>
+            <span className="metric-value">
+              {tick.t0.toFixed(2)}s → {tick.t1.toFixed(2)}s
+            </span>
+          </span>
+          <span className="metric">
+            <span className="metric-label">Cursor UNIX</span>
+            <span className="metric-value">{tick.cursor_unix.toFixed(2)}</span>
+          </span>
+        </div>
       ) : (
-        <span>Waiting for server…</span>
+        <p className="muted">Waiting for live playback updates…</p>
       )}
     </div>
   );

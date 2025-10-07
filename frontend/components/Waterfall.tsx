@@ -104,13 +104,13 @@ export function Waterfall({ bandId, f0, f1, t0, t1, maxw = 1600, maxt = 600 }: W
   }, [tile]);
 
   return (
-    <div ref={containerRef} style={{ position: 'relative' }}>
+    <div ref={containerRef} style={{ position: 'relative', height: '100%' }}>
       <DeckGL
         views={new OrthographicView({ flipY: true })}
         controller={{ dragPan: true, dragRotate: false, scrollZoom: true, doubleClickZoom: true }}
         viewState={viewState}
         onViewStateChange={(e) => setViewState(e.viewState as any)}
-        style={{ width: '100%', height: '400px' }}
+        style={{ width: '100%', height: '100%' }}
         layers={layer ? [layer] : []}
       />
       <div
