@@ -7,9 +7,10 @@ export interface PeakControlsProps {
   curves: string[];
   freqWindow?: { f0?: number; f1?: number };
   onPeaks: (peaks: PeakItem[]) => void;
+  className?: string;
 }
 
-export function PeakControls({ bandId, curves, freqWindow, onPeaks }: PeakControlsProps) {
+export function PeakControls({ bandId, curves, freqWindow, onPeaks, className }: PeakControlsProps) {
   const [curve, setCurve] = useState(curves[0] ?? 'Avg');
   const [height, setHeight] = useState<number | undefined>();
   const [prominence, setProminence] = useState<number | undefined>(10);
@@ -36,47 +37,54 @@ export function PeakControls({ bandId, curves, freqWindow, onPeaks }: PeakContro
     }
   };
 
+  const classes = ['control-card', 'peak-controls', className].filter(Boolean).join(' ');
+
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
-      <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-        Curve
-        <select value={curve} onChange={(event) => setCurve(event.target.value)}>
-          {curves.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-        Min Height
-        <input
-          type="number"
-          value={height ?? ''}
-          onChange={(event) => setHeight(event.target.value ? Number(event.target.value) : undefined)}
-        />
-      </label>
-      <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-        Prominence
-        <input
-          type="number"
-          value={prominence ?? ''}
-          onChange={(event) =>
-            setProminence(event.target.value ? Number(event.target.value) : undefined)
-          }
-        />
-      </label>
-      <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-        Distance
-        <input
-          type="number"
-          value={distance ?? ''}
-          onChange={(event) => setDistance(event.target.value ? Number(event.target.value) : undefined)}
-        />
-      </label>
-      <button type="submit" disabled={loading}>
-        {loading ? 'Detecting…' : 'Detect Peaks'}
-      </button>
+    <form onSubmit={handleSubmit} className={classes}>
+      <div className="card-title">Peak Detection</div>
+      <div className="field-grid">
+        <label className="field-group">
+          <span className="field-label">Curve</span>
+          <select value={curve} onChange={(event) => setCurve(event.target.value)}>
+            {curves.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field-group">
+          <span className="field-label">Min Height</span>
+          <input
+            type="number"
+            value={height ?? ''}
+            onChange={(event) => setHeight(event.target.value ? Number(event.target.value) : undefined)}
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">Prominence</span>
+          <input
+            type="number"
+            value={prominence ?? ''}
+            onChange={(event) =>
+              setProminence(event.target.value ? Number(event.target.value) : undefined)
+            }
+          />
+        </label>
+        <label className="field-group">
+          <span className="field-label">Distance</span>
+          <input
+            type="number"
+            value={distance ?? ''}
+            onChange={(event) => setDistance(event.target.value ? Number(event.target.value) : undefined)}
+          />
+        </label>
+      </div>
+      <div className="actions">
+        <button type="submit" className="primary" disabled={loading}>
+          {loading ? 'Detecting…' : 'Detect Peaks'}
+        </button>
+      </div>
     </form>
   );
 }

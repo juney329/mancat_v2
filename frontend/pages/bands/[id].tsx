@@ -81,32 +81,149 @@ export default function BandDetailPage() {
   }
 
   if (!summary) {
-    return <main>Loading summary…</main>;
+    return <main className="band-shell">Loading summary…</main>;
   }
 
+  const freqs = summary.freqs ?? [];
+  const freqStart = freqs[0] ?? 0;
+  const freqEnd = freqs[freqs.length - 1] ?? freqStart;
+  const windowStart = freqWindow.f0 ?? freqStart;
+  const windowEnd = freqWindow.f1 ?? freqEnd;
+  const playbackLabel =
+    timeWindow.t0 !== undefined && timeWindow.t1 !== undefined
+      ? `${timeWindow.t0.toFixed(2)}s → ${timeWindow.t1.toFixed(2)}s`
+      : 'Awaiting playback window';
+  const overviewMetrics = [
+    { label: 'Frequency Start', value: formatFrequency(freqStart) },
+    { label: 'Frequency End', value: formatFrequency(freqEnd) },
+    { label: 'Span', value: formatSpan(Math.max(0, freqEnd - freqStart)) },
+    { label: 'Zoom Window', value: `${formatFrequency(windowStart)} → ${formatFrequency(windowEnd)}` }
+  ];
+
   return (
-    <main>
-      <h1>Band {id}</h1>
-      <section>
-        <PlaybackBar bandId={id} onTick={handlePlaybackTick} />
-      </section>
-      <section>
-        <TracePlot freqs={summary.freqs} curves={curves} peaks={peaks} markers={markers} onZoom={handleZoom} />
-      </section>
-      <section>
-        <PeakControls
-          bandId={id}
-          curves={Object.keys(curves)}
-          freqWindow={freqWindow}
-          onPeaks={setPeaks}
-        />
-      </section>
-      <section>
-        <Waterfall bandId={id} f0={freqWindow.f0} f1={freqWindow.f1} t0={timeWindow.t0} t1={timeWindow.t1} />
-      </section>
-      <section>
-        <MarkersPanel markers={markers} onCreate={handleCreateMarker} onDelete={handleDeleteMarker} />
-      </section>
+    <main className="band-shell">
+      <header className="band-header">
+        <div>
+          <p className="eyebrow">RF Spectrum Explorer</p>
+          <h1>Band {id}</h1>
+          <p className="muted">Live composite traces and waterfall playback for the selected RF band.</p>
+        </div>
+        <div className="header-status">
+          <span className="badge badge--live">Live Feed</span>
+          <span className="muted">{playbackLabel}</span>
+        </div>
+      </header>
+      <div className="band-layout">
+        <aside className="band-sidebar">
+          <section className="control-card overview-card">
+            <div className="card-title">Band Overview</div>
+            <dl className="overview-metrics">
+              {overviewMetrics.map((metric) => (
+                <div key={metric.label} className="meta-row">
+                  <dt>{metric.label}</dt>
+                  <dd>{metric.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+          <PlaybackBar bandId={id} onTick={handlePlaybackTick} className="sidebar-card" />
+          <PeakControls
+            bandId={id}
+            curves={Object.keys(curves)}
+            freqWindow={freqWindow}
+            onPeaks={setPeaks}
+            className="sidebar-card"
+          />
+          <MarkersPanel
+            markers={markers}
+            onCreate={handleCreateMarker}
+            onDelete={handleDeleteMarker}
+            className="sidebar-card"
+          />
+        </aside>
+        <div className="panel-stack">
+          <section className="panel-card panel-card--trace" id="summary">
+            <div className="panel-header">
+              <div>
+                <h2>Spectrum Composite</h2>
+                <p className="muted">Average power traces across the current frequency selection.</p>
+              </div>
+              <div className="header-metric">
+                <span className="metric-label">Zoom Span</span>
+                <span className="metric-value">{formatSpan(Math.max(0, windowEnd - windowStart))}</span>
+              </div>
+            </div>
+            <div className="panel-body panel-body--tall">
+              <TracePlot freqs={summary.freqs} curves={curves} peaks={peaks} markers={markers} onZoom={handleZoom} />
+            </div>
+          </section>
+          <section className="panel-card panel-card--waterfall" id="waterfall">
+            <div className="panel-header">
+              <div>
+                <h2>Waterfall Playback</h2>
+                <p className="muted">Time-evolving energy density aligned to the current playback window.</p>
+              </div>
+              <div className="header-metric">
+                <span className="metric-label">Window</span>
+                <span className="metric-value">{playbackLabel}</span>
+              </div>
+            </div>
+            <div className="panel-body panel-body--tall">
+              <Waterfall bandId={id} f0={freqWindow.f0} f1={freqWindow.f1} t0={timeWindow.t0} t1={timeWindow.t1} />
+            </div>
+          </section>
+          <section className="panel-card panel-card--peaks" id="peaks">
+            <div className="panel-header">
+              <div>
+                <h2>Detected Peaks</h2>
+                <p className="muted">Results from the latest peak detection run.</p>
+              </div>
+              <span className="badge badge--outline">{peaks.length} peaks</span>
+            </div>
+            <div className="panel-body panel-body--list">
+              {peaks.length === 0 ? (
+                <p className="muted">Run a peak detection above to populate this table.</p>
+              ) : (
+                <table className="peaks-table">
+                  <thead>
+                    <tr>
+                      <th>Frequency</th>
+                      <th>Power</th>
+                      <th>Prominence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {peaks.map((peak) => (
+                      <tr key={`${peak.freq}-${peak.value}`}>
+                        <td>{formatFrequency(peak.freq)}</td>
+                        <td>{peak.value.toFixed(2)} dB</td>
+                        <td>{formatProminence(peak.properties)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
     </main>
   );
+}
+
+function formatFrequency(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)} GHz`;
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(2)} MHz`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(2)} kHz`;
+  return `${value.toFixed(2)} Hz`;
+}
+
+function formatSpan(span: number): string {
+  return formatFrequency(span);
+}
+
+function formatProminence(properties: Record<string, number>): string {
+  const prominence = properties.prominences ?? properties.prominence;
+  return prominence !== undefined ? `${prominence.toFixed(2)} dB` : '—';
 }

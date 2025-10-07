@@ -6,9 +6,10 @@ export interface MarkersPanelProps {
   markers: Marker[];
   onCreate: (marker: Marker) => void;
   onDelete: (id: string) => void;
+  className?: string;
 }
 
-export function MarkersPanel({ markers, onCreate, onDelete }: MarkersPanelProps) {
+export function MarkersPanel({ markers, onCreate, onDelete, className }: MarkersPanelProps) {
   const [form, setForm] = useState<Marker>({ id: '', freq: 0, label: '', color: '#ff0000', width: 0 });
 
   const handleSubmit = (event: FormEvent) => {
@@ -24,12 +25,17 @@ export function MarkersPanel({ markers, onCreate, onDelete }: MarkersPanelProps)
   const markerList = useMemo(
     () =>
       markers.map((marker) => (
-        <li key={marker.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-          <span>
-            <strong>{marker.id}</strong> @ {marker.freq.toFixed(2)} Hz
-            {marker.width ? ` ± ${marker.width / 2} Hz` : ''}
-          </span>
-          <button type="button" onClick={() => onDelete(marker.id)}>
+        <li key={marker.id} className="marker-item">
+          <div className="marker-summary">
+            <span className="marker-color" style={{ background: marker.color ?? '#ff0000' }} aria-hidden />
+            <div>
+              <div className="marker-id">{marker.id}</div>
+              <div className="marker-meta">
+                {marker.freq.toFixed(2)} Hz{marker.width ? ` · span ±${(marker.width / 2).toFixed(2)} Hz` : ''}
+              </div>
+            </div>
+          </div>
+          <button type="button" className="ghost" onClick={() => onDelete(marker.id)}>
             Remove
           </button>
         </li>
@@ -37,23 +43,27 @@ export function MarkersPanel({ markers, onCreate, onDelete }: MarkersPanelProps)
     [markers, onDelete]
   );
 
+  const classes = ['control-card', 'markers-panel', className].filter(Boolean).join(' ');
+
   return (
-    <div style={{ background: '#11141f', padding: '1rem', borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.08)' }}>
-      <h3 style={{ marginTop: 0 }}>Markers</h3>
-      <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 1rem 0', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-        {markerList}
-      </ul>
-      <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-          ID
+    <div className={classes}>
+      <div className="card-title">Markers</div>
+      {markers.length === 0 ? (
+        <p className="muted">No markers defined yet. Use the form below to annotate the trace.</p>
+      ) : (
+        <ul className="marker-list">{markerList}</ul>
+      )}
+      <form onSubmit={handleSubmit} className="field-grid">
+        <label className="field-group">
+          <span className="field-label">ID</span>
           <input value={form.id} onChange={(event) => setForm({ ...form, id: event.target.value })} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-          Label
+        <label className="field-group">
+          <span className="field-label">Label</span>
           <input value={form.label ?? ''} onChange={(event) => setForm({ ...form, label: event.target.value })} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-          Frequency (Hz)
+        <label className="field-group">
+          <span className="field-label">Frequency (Hz)</span>
           <input
             type="number"
             value={form.freq}
@@ -61,8 +71,8 @@ export function MarkersPanel({ markers, onCreate, onDelete }: MarkersPanelProps)
             step="0.1"
           />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-          Width (Hz)
+        <label className="field-group">
+          <span className="field-label">Width (Hz)</span>
           <input
             type="number"
             value={form.width ?? 0}
@@ -70,13 +80,15 @@ export function MarkersPanel({ markers, onCreate, onDelete }: MarkersPanelProps)
             step="0.1"
           />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
-          Color
+        <label className="field-group">
+          <span className="field-label">Color</span>
           <input type="color" value={form.color ?? '#ff0000'} onChange={(event) => setForm({ ...form, color: event.target.value })} />
         </label>
-        <button type="submit" style={{ alignSelf: 'end' }}>
-          Add Marker
-        </button>
+        <div className="actions">
+          <button type="submit" className="primary">
+            Add Marker
+          </button>
+        </div>
       </form>
     </div>
   );

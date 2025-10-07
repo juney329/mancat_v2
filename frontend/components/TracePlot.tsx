@@ -101,7 +101,7 @@ export function TracePlot({ freqs, curves, peaks = [], markers = [], onZoom }: T
     <Plot
       data={traces}
       layout={layout}
-      style={{ width: '100%', height: '400px' }}
+      style={{ width: '100%', height: '100%' }}
       onRelayout={handleRelayout}
       config={{ displaylogo: false, responsive: true }}
     />
