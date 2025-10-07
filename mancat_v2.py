@@ -97,10 +97,14 @@ def process_band(idx, f_start, f_stop, files, db_min=-200.0, db_max=0.0, scale=1
     mmap[:] = wf_q[:]
     del mmap  # flush
 
-    # Axes and meta
-    np.save(f"freqs0_band{idx}.npy", freqs0.astype(np.float64))
+    # Axes and meta (write both legacy *_band{idx} and backend-style _{idx} file names)
+    freqs0_out = freqs0.astype(np.float64)
+    np.save(f"freqs0_band{idx}.npy", freqs0_out)
+    np.save(f"freqs0_{idx}.npy", freqs0_out)
+
     rel_t = (times - times[0]).astype(np.int64)
     np.save(f"rel_t_band{idx}.npy", rel_t)
+    np.save(f"rel_t_{idx}.npy", rel_t)
 
     meta = {
         "db_min": float(db_min),
@@ -114,12 +118,13 @@ def process_band(idx, f_start, f_stop, files, db_min=-200.0, db_max=0.0, scale=1
         "levels":  []  # filled below
     }
 
-    # Full-res summaries
+    # Full-res summaries (write both naming schemes)
     wf_f = (wf_q.astype(np.float32)/scale) + db_min
     s_max = wf_f.max(axis=0).astype(np.float32)
     s_avg = wf_f.mean(axis=0).astype(np.float32)
     s_min = wf_f.min(axis=0).astype(np.float32)
     np.savez(f"summary_band{idx}.npz", max=s_max, avg=s_avg, min=s_min)
+    np.savez(f"summary_{idx}.npz", max=s_max, avg=s_avg, min=s_min)
 
     # Multi-resolution frequency tiers (min/avg/max per decimation bin)
     tiers = []
@@ -160,6 +165,8 @@ def process_band(idx, f_start, f_stop, files, db_min=-200.0, db_max=0.0, scale=1
         meta["levels"].append({"decim": dec, "k": int(k)})
 
     with open(f"meta_band{idx}.json", "w") as f:
+        json.dump(meta, f, indent=2)
+    with open(f"meta_{idx}.json", "w") as f:
         json.dump(meta, f, indent=2)
     with open(f"tiers_band{idx}.json","w") as f:
         json.dump(tiers, f)

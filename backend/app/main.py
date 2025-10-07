@@ -11,9 +11,13 @@ from .ws import router as ws_router
 def create_app() -> FastAPI:
     app = FastAPI(title="RF Spectrum Backend")
 
+    # Support comma-separated origins in FRONTEND_ORIGIN (e.g., "http://localhost:3001,http://localhost:3000")
+    origins_env = os.getenv("FRONTEND_ORIGIN", "*")
+    allow_origins = [o.strip() for o in origins_env.split(",")] if origins_env else ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[os.getenv("FRONTEND_ORIGIN", "*")],
+        allow_origins=allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

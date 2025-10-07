@@ -7,7 +7,7 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       - DATA_DIR=/data
-      - FRONTEND_ORIGIN=http://localhost:3000
+      - FRONTEND_ORIGIN=http://localhost:3001
     volumes:
       - ./data:/data:ro
     ports:
@@ -21,8 +21,10 @@ services:
       - NEXT_PUBLIC_API_BASE=http://localhost:8000
     volumes:
       - ./frontend:/app
+      - /app/node_modules
       - ./data:/data:ro
     ports:
-      - "3000:3000"
+      - "3001:3000"
     depends_on:
       - backend
+    command: sh -c "npm install && npm run dev -- -H 0.0.0.0"
