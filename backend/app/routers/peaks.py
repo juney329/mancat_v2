@@ -14,7 +14,9 @@ router = APIRouter(prefix="/bands", tags=["peaks"])
 
 class PeakRequest(BaseModel):
     curve: str = Field(..., description="Summary curve to analyse (e.g. Avg, Max)")
-    height: Optional[float] = Field(default=None, ge=0)
+    # Height is a threshold in the same units as the signal (e.g., dB),
+    # which can legitimately be negative. Do not constrain to ge=0.
+    height: Optional[float] = Field(default=None)
     prominence: Optional[float] = Field(default=None, ge=0)
     distance: Optional[int] = Field(default=None, ge=1)
     f0: Optional[float] = Field(default=None)

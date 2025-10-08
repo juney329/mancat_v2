@@ -100,7 +100,12 @@ export async function postPeaks(id: string, payload: PeakRequest): Promise<PeakI
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
-    throw new Error('Failed to detect peaks');
+    let details = '';
+    try {
+      const text = await response.text();
+      details = text ? ` — ${text}` : '';
+    } catch {}
+    throw new Error(`Failed to detect peaks (HTTP ${response.status})${details}`);
   }
   const data = (await response.json()) as { peaks: PeakItem[] };
   return data.peaks;

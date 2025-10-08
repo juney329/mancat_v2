@@ -43,8 +43,8 @@ export function PeakControls({ bandId, curves, freqWindow, onPeaks, className }:
     <form onSubmit={handleSubmit} className={classes}>
       <div className="card-title">Peak Detection</div>
       <div className="field-grid">
-        <label className="field-group">
-          <span className="field-label">Curve</span>
+        <label className="field-group" title="Which curve to use for peak detection (e.g., Avg, Max).">
+          <span className="field-label">Curve to analyze</span>
           <select value={curve} onChange={(event) => setCurve(event.target.value)}>
             {curves.map((option) => (
               <option key={option} value={option}>
@@ -52,32 +52,41 @@ export function PeakControls({ bandId, curves, freqWindow, onPeaks, className }:
               </option>
             ))}
           </select>
+          <small className="muted">Select the trace used for detection.</small>
         </label>
-        <label className="field-group">
-          <span className="field-label">Min Height</span>
+        <label className="field-group" title="Minimum amplitude threshold in dB. Peaks below this value are ignored.">
+          <span className="field-label">Minimum height (dB)</span>
           <input
             type="number"
+            step="0.1"
             value={height ?? ''}
+            placeholder="e.g., -90"
             onChange={(event) => setHeight(event.target.value ? Number(event.target.value) : undefined)}
           />
+          <small className="muted">Ignore peaks below this level.</small>
         </label>
-        <label className="field-group">
-          <span className="field-label">Prominence</span>
+        <label className="field-group" title="Required vertical distance from a peak to its surroundings, in dB.">
+          <span className="field-label">Prominence (dB)</span>
           <input
             type="number"
+            step="0.1"
             value={prominence ?? ''}
             onChange={(event) =>
               setProminence(event.target.value ? Number(event.target.value) : undefined)
             }
           />
+          <small className="muted">Higher = fewer, more distinct peaks.</small>
         </label>
-        <label className="field-group">
-          <span className="field-label">Distance</span>
+        <label className="field-group" title="Minimum separation between peaks, measured in frequency bins (data points).">
+          <span className="field-label">Min distance (bins)</span>
           <input
             type="number"
+            step="1"
+            min="1"
             value={distance ?? ''}
             onChange={(event) => setDistance(event.target.value ? Number(event.target.value) : undefined)}
           />
+          <small className="muted">Increase to avoid detecting very close peaks as separate.</small>
         </label>
       </div>
       <div className="actions">

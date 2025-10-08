@@ -110,10 +110,26 @@ export function Waterfall({ bandId, f0, f1, t0, t1, maxw = 1600, maxt = 600, onB
     return h;
   }, [naturalSize, containerWidth]);
 
+  function formatTimeMinutesHours(seconds: number): string {
+    const abs = Math.abs(seconds);
+    if (abs >= 3600) {
+      return `${(seconds / 3600).toFixed(2)} hr`;
+    }
+    return `${(seconds / 60).toFixed(2)} min`;
+  }
+
+  function formatFrequencyAdaptive(hz: number): string {
+    const abs = Math.abs(hz);
+    if (abs >= 1_000_000_000) return `${(hz / 1_000_000_000).toFixed(2)} GHz`;
+    if (abs >= 1_000_000) return `${(hz / 1_000_000).toFixed(2)} MHz`;
+    if (abs >= 1_000) return `${(hz / 1_000).toFixed(2)} kHz`;
+    return `${hz.toFixed(2)} Hz`;
+  }
+
   const axisText = useMemo(() => {
     if (!tile) return null;
-    const freq = `${tile.freqStart.toFixed(2)} MHz → ${tile.freqEnd.toFixed(2)} MHz`;
-    const time = `${tile.timeStart.toFixed(2)} s → ${tile.timeEnd.toFixed(2)} s`;
+    const freq = `${formatFrequencyAdaptive(tile.freqStart)} → ${formatFrequencyAdaptive(tile.freqEnd)}`;
+    const time = `${formatTimeMinutesHours(tile.timeStart)} → ${formatTimeMinutesHours(tile.timeEnd)}`;
     return { freq, time };
   }, [tile]);
 
