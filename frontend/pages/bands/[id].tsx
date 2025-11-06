@@ -17,6 +17,15 @@ export default function BandDetailPage() {
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [freqWindow, setFreqWindow] = useState<{ f0?: number; f1?: number }>({});
   const [wfBounds, setWfBounds] = useState<{ f0: number; f1: number; t0: number; t1: number } | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Ensure charts (Plotly) resize when the sidebar toggles, since useResizeHandler
+  // listens to window resize events. Dispatch a resize to trigger relayout.
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new Event('resize'));
+    } catch {}
+  }, [sidebarOpen]);
 
   useEffect(() => {
     if (!id) return;
@@ -94,7 +103,26 @@ export default function BandDetailPage() {
 
   return (
     <div style={{ display: 'flex' }}>
-      <BandsSidebar />
+      {sidebarOpen ? <BandsSidebar /> : null}
+      <button
+        type="button"
+        aria-label={sidebarOpen ? 'Hide bands sidebar' : 'Show bands sidebar'}
+        onClick={() => setSidebarOpen((v) => !v)}
+        style={{
+          position: 'fixed',
+          left: 12,
+          top: 12,
+          zIndex: 1000,
+          padding: '0.4rem 0.6rem',
+          borderRadius: 8,
+          border: '1px solid rgba(255,255,255,0.15)',
+          background: 'rgba(12,13,16,0.8)',
+          color: '#f7f7f7',
+          cursor: 'pointer'
+        }}
+      >
+        {sidebarOpen ? '⟨ Hide Bands' : 'Show Bands ⟩'}
+      </button>
       <main className="band-shell" style={{ flex: 1 }}>
       <header className="band-header">
         <div>

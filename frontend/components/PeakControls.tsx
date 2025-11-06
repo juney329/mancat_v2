@@ -12,10 +12,11 @@ export interface PeakControlsProps {
 
 export function PeakControls({ bandId, curves, freqWindow, onPeaks, className }: PeakControlsProps) {
   const [curve, setCurve] = useState(curves[0] ?? 'Avg');
-  const [height, setHeight] = useState<number | undefined>();
+  const [height, setHeight] = useState<number | undefined>(-90);
   const [prominence, setProminence] = useState<number | undefined>(10);
   const [distance, setDistance] = useState<number | undefined>(5);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (curves.length === 0) {
@@ -27,11 +28,19 @@ export function PeakControls({ bandId, curves, freqWindow, onPeaks, className }:
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    setError(null);
+    if (curves.length === 0 || !curve || !curves.includes(curve)) {
+      setError('Select a valid curve before detecting peaks.');
+      return;
+    }
     setLoading(true);
     try {
       const payload: PeakRequest = { curve, height, prominence, distance, ...freqWindow };
       const peaks = await postPeaks(bandId, payload);
       onPeaks(peaks);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to detect peaks';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -89,8 +98,17 @@ export function PeakControls({ bandId, curves, freqWindow, onPeaks, className }:
           <small className="muted">Increase to avoid detecting very close peaks as separate.</small>
         </label>
       </div>
+      {error ? (
+        <div role="alert" aria-live="polite" className="muted" style={{ color: '#ff8080' }}>
+          {error}
+        </div>
+      ) : null}
       <div className="actions">
-        <button type="submit" className="primary" disabled={loading}>
+        <button
+          type="submit"
+          className="primary"
+          disabled={loading || curves.length === 0 || !curve || !curves.includes(curve)}
+        >
           {loading ? 'Detecting…' : 'Detect Peaks'}
         </button>
       </div>
