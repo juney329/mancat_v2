@@ -49,7 +49,7 @@ def get_feature(
             params.append(run_id)
         sql += " ORDER BY band_index LIMIT ?"
         params.append(limit)
-        rows = con.execute(sql, params).fetchdf().to_dict(orient="records")
+        rows = con.execute(sql, params).fetch_arrow_table().to_pylist()
     except Exception as exc:  # pragma: no cover - runtime dependency
         raise HTTPException(status_code=404, detail=f"Unable to read feature parquet: {exc}")
     return jsonable_encoder(rows)
