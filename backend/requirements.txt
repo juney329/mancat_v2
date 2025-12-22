@@ -4,3 +4,5 @@ numpy
 scipy
 pillow
 python-multipart
+duckdb
+minio

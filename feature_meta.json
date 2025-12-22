@@ -1,0 +1,26 @@
+{
+  "gold_object": "gold/survey/MKAB/2025-11/feature.parquet",
+  "bands": 10,
+  "generated_at": "2025-12-22T11:55:21.494658Z",
+  "source_prefix": "bronze/mission_type=survey/site=MKAB/sensor=CRFS/",
+  "band_indices": [
+    4,
+    9,
+    1,
+    5,
+    2,
+    0,
+    6,
+    7,
+    8,
+    3
+  ],
+  "days_covered": [
+    "13",
+    "14"
+  ],
+  "run_ids": [
+    "MKABrfeye400062_20251113_093927",
+    "MKABrfeye400062_20251114_003018"
+  ]
+}

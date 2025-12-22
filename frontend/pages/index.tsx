@@ -23,6 +23,11 @@ export default function IndexPage() {
           <h1>Band Directory</h1>
           <p className="muted">Select a band to review composite traces, analyze waterfalls, and annotate notable activity.</p>
         </div>
+        <div className="controls">
+          <Link href="/feature" className="button">
+            Open Feature (MinIO)
+          </Link>
+        </div>
       </header>
       <section className="band-grid">
         {bands.map((band) => {

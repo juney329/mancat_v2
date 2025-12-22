@@ -90,3 +90,57 @@ pytest backend/app/tests
 ```
 
 The tests create synthetic artifact files to validate summary and waterfall resampling, as well as marker persistence.
+
+## Mancat v2 (MinIO parquet → gold stats)
+
+`mancat_v2.py` now reads the per-band parquet files produced by `pbd2-parser` (bronze layout in MinIO) and emits a monthly `feature.parquet` into `gold/survey/<location>/<YYYY-MM>/feature.parquet`, plus a `feature_meta.json` sidecar.
+
+Dependencies: `pyarrow`, `minio`, `pyyaml` (config), `numpy`.
+
+Example:
+
+```bash
+python mancat_v2.py \
+  --month 2025-12 \
+  --mission-type baseline \
+  --site lab \
+  --sensor ADD123 \
+  --location lab \
+  --endpoint 10.10.6.50:9000 \
+  --access-key <KEY> \
+  --secret-key <SECRET> \
+  --bucket rf-lake
+```
+
+Flags:
+- `--days 01,02,15` to limit to specific days within the month (default: all days)
+- `--band-label <label>` or `--band-index <idx>` to target a single band
+- `--run-id <id>` to filter a specific run
+- `--bronze-prefix <prefix>` to override the default derived prefix (`bronze/mission_type=<m>/site=<s>/sensor=<sensor>/`)
+- `--dry-run` or `--list-bands` to inspect matching objects without processing.
+
+## Backend: MinIO + DuckDB feature/bronze APIs
+
+The FastAPI backend can now stream `feature.parquet` (gold) and on-demand bronze band summaries directly from MinIO via DuckDB/httpfs (no local copies).
+
+Environment variables (backend):
+- `MINIO_ENDPOINT` (e.g., `10.10.100.28:9000`)
+- `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`
+- `MINIO_BUCKET` (default `rf-lake`)
+- `MINIO_USE_SSL` (`true`/`false`)
+- Optional `MINIO_REGION`
+
+New endpoints:
+- `GET /feature?location=<loc>&month=YYYY-MM` with optional `band_index`, `band_label`, `day`, `run_id`, `limit`.
+- `GET /feature/schema` — schema for the same file.
+- `GET /bronze/bands?mission_type=...&site=...&sensor=...&year=YYYY&month=MM` (optional `day`, `run_id`, `band` filters).
+- `GET /bronze/band/{band_index}/summary?...` — min/avg/max per frequency bin from remote `band{idx}.parquet`.
+
+Frontend:
+- New page `/feature` lists feature rows and can fetch a bronze band summary for plotting (pure client-side).
+
+Streamlit:
+- `streamlit_app.py` reads `feature.parquet` from MinIO via DuckDB and can fetch a bronze band summary for quick visualization.
+
+Deployment note:
+- Run the backend on the same host as MinIO/DuckDB (as requested) and pass the env vars above (see `docker-compose.yml` as a template). Only the backend port needs exposure to the frontend/clients.

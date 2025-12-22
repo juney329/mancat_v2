@@ -3,3 +3,6 @@ plotly
 numpy
 scipy
 grpcio-tools
+pyarrow
+minio
+pyyaml

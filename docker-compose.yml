@@ -6,6 +6,11 @@ services:
     environment:
       - DATA_DIR=/data
       - FRONTEND_ORIGIN=http://localhost:3001
+      - MINIO_ENDPOINT=localhost:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=rf-lake
+      - MINIO_USE_SSL=false
     volumes:
       - ./data:/data:ro
     ports:

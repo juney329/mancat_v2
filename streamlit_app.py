@@ -1,209 +1,123 @@
-# streamlit_app.py — Interactive viewer for artifacts produced by mancat_v2.py
-import os, json, time, math, glob
-import numpy as np
+"""
+Streamlit viewer for MinIO-backed feature.parquet and bronze band summaries via DuckDB/httpfs.
+"""
+import os
+
+import duckdb
+import pandas as pd
+import plotly.express as px
 import streamlit as st
-import plotly.graph_objects as go
-from scipy.signal import find_peaks
 
-st.set_page_config(layout="wide", page_title="RF Spectrum Post-Processor")
 
-# ---------- Loaders ----------
-@st.cache_data
-def load_meta(band_idx):
-    with open(f"meta_band{band_idx}.json","r") as f: meta = json.load(f)
-    freqs = np.load(f"freqs0_band{band_idx}.npy")
-    rel_t = np.load(f"rel_t_band{band_idx}.npy")
-    return meta, freqs, rel_t
+st.set_page_config(layout="wide", page_title="Feature viewer (MinIO/DuckDB)")
 
-def open_memmap(band_idx, shape):
-    return np.memmap(f"waterfall_band{band_idx}.dat", dtype=np.int16, mode="r", shape=shape)
 
-@st.cache_data
-def load_summary(band_idx):
-    d = np.load(f"summary_band{band_idx}.npz")
-    return d["max"], d["avg"], d["min"]
+def _bool_env(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).lower() in ("1", "true", "yes", "on")
 
-@st.cache_data
-def load_tiers(band_idx):
-    with open(f"tiers_band{band_idx}.json","r") as f: tiers = json.load(f)
-    return tiers
 
-def load_markers(band_idx):
-    fn = f"markers_band{band_idx}.json"
-    if not os.path.exists(fn):
-        return {"markers": [], "regions": []}
-    with open(fn,"r") as f: return json.load(f)
+def duck_conn():
+    endpoint = os.environ["MINIO_ENDPOINT"]
+    access = os.environ["MINIO_ACCESS_KEY"]
+    secret = os.environ["MINIO_SECRET_KEY"]
+    use_ssl = _bool_env("MINIO_USE_SSL", False)
+    region = os.getenv("MINIO_REGION", "")
+    con = duckdb.connect()
+    con.execute("INSTALL httpfs; LOAD httpfs;")
+    con.execute("SET s3_url_style='path';")
+    con.execute("SET s3_endpoint=$1;", [endpoint])
+    con.execute("SET s3_access_key_id=$1;", [access])
+    con.execute("SET s3_secret_access_key=$1;", [secret])
+    con.execute("SET s3_use_ssl=$1;", ["true" if use_ssl else "false"])
+    if region:
+        con.execute("SET s3_region=$1;", [region])
+    return con
 
-def save_markers(band_idx, data):
-    with open(f"markers_band{band_idx}.json","w") as f: json.dump(data, f, indent=2)
 
-# ---------- Helpers ----------
-def choose_tier(tiers, f0, f1, max_points=2200):
-    best = None
-    for t in tiers:
-        f = np.asarray(t["f_axis"])
-        m = (f>=f0) & (f<=f1)
-        pts = int(m.sum())
-        if pts == 0: 
-            continue
-        if pts <= max_points:
-            if best is None or pts > best[0]:
-                best = (pts, t, m)
-    return (None, None, None) if best is None else best
+@st.cache_data(show_spinner=False)
+def load_feature(location: str, month: str) -> pd.DataFrame:
+    obj = f"s3://{os.getenv('MINIO_BUCKET', 'rf-lake')}/gold/survey/{location}/{month}/feature.parquet"
+    con = duck_conn()
+    return con.execute("SELECT * FROM read_parquet($1)", [obj]).fetch_df()
 
-def slice_full(meta, freqs, t0_idx, t1_idx, f0, f1, max_freq_points=1800):
-    sf = int(np.searchsorted(freqs, f0, side="left"))
-    ef = int(np.searchsorted(freqs, f1, side="right"))
-    sf = max(0, min(sf, len(freqs)-1))
-    ef = max(sf+1, min(ef, len(freqs)))
-    f_slice = freqs[sf:ef]
-    dec = max(1, int(math.ceil(len(f_slice)/max_freq_points)))
-    idx = slice(sf, ef, dec)
-    mem = open_memmap(band, (meta["n_traces"], meta["n_freqs"]))[t0_idx:t1_idx, idx]
-    wf_f = (mem.astype(np.float32)/meta["scale"]) + meta["db_min"]
-    return freqs[idx], wf_f
 
-# ---------- UI ----------
-st.title("RF Spectrum Post-Processor")
+@st.cache_data(show_spinner=False)
+def load_band_summary(band_index: int, mission_type: str, site: str, sensor: str, year: str, month: str) -> pd.DataFrame:
+    bucket = os.getenv("MINIO_BUCKET", "rf-lake")
+    prefix = f"s3://{bucket}/bronze/mission_type={mission_type}/site={site}/sensor={sensor}/band=*/year={year}/month={month}/**/band{band_index}.parquet"
+    con = duck_conn()
+    sql = """
+    WITH src AS (
+      SELECT start_hz, stop_hz, step_hz, power_dbm FROM read_parquet($1)
+    )
+    SELECT
+      idx,
+      MIN(val) AS power_min,
+      MAX(val) AS power_max,
+      AVG(val) AS power_mean,
+      ANY_VALUE(start_hz) AS start_hz,
+      ANY_VALUE(step_hz) AS step_hz
+    FROM src, UNNEST(power_dbm) WITH ORDINALITY AS t(val, idx)
+    GROUP BY idx
+    ORDER BY idx;
+    """
+    return con.execute(sql, [prefix]).fetch_df()
 
-meta_files = sorted(glob.glob("meta_band*.json"))
-bands = [int(f.split("meta_band")[1].split(".json")[0]) for f in meta_files]
-if not bands:
-    st.error("No meta_band*.json found. Run mancat_v2.py first.")
-    st.stop()
 
-with st.sidebar:
-    band = st.selectbox("Band", bands)
-    meta, freqs, rel_t = load_meta(band)
-    db_min, db_max, scale = meta["db_min"], meta["db_max"], meta["scale"]
-    nT, nF = meta["n_traces"], meta["n_freqs"]
+st.title("Feature parquet (MinIO)")
 
-    st.subheader("Waterfall scale (dBm)")
-    vmin = st.slider("vmin", db_min, db_max, max(db_min, -120.0), 1.0)
-    vmax = st.slider("vmax", db_min, db_max, min(db_max, -80.0), 1.0)
+col1, col2 = st.columns(2)
+with col1:
+    location = st.text_input("Location", value="MKAB")
+with col2:
+    month = st.text_input("Month (YYYY-MM)", value="2025-11")
 
-    st.subheader("Peaks")
-    pk_curve = st.radio("Curve", ["Avg","Max"], horizontal=True)
-    pk_height = st.slider("Min height", db_min, db_max, -90.0, 1.0)
-    pk_prom   = st.slider("Prominence", 0.0, 40.0, 6.0, 0.5)
-    pk_dist   = st.slider("Min distance (points)", 1, 1000, 25)
+if st.button("Load feature"):
+    try:
+        df_feature = load_feature(location, month)
+        st.session_state["feature_df"] = df_feature
+        st.success(f"Loaded {len(df_feature)} rows from feature.parquet")
+    except Exception as exc:  # pragma: no cover - runtime only
+        st.error(f"Failed to load feature.parquet: {exc}")
 
-    st.subheader("Playback")
-    window_s  = st.slider("Window (seconds)", 1, max(2, int(rel_t.max() or 1)), 5)
-    speed_fps = st.slider("Speed (frames/sec)", 1, 20, 5)
-    st.subheader("Top chart behavior")
-    follow_window = st.checkbox("Use current time window", value=True, help="When enabled, Max/Avg/Min are computed from the visible time window. When disabled, precomputed tiers over all time are used.")
+df_feature = st.session_state.get("feature_df")
+if df_feature is not None:
+    st.dataframe(df_feature, use_container_width=True)
 
-# session state
-if "playing" not in st.session_state: st.session_state.playing = False
-if "t0" not in st.session_state:      st.session_state.t0 = 0
-if "view_f0" not in st.session_state: st.session_state.view_f0 = float(freqs[0])
-if "view_f1" not in st.session_state: st.session_state.view_f1 = float(freqs[-1])
+    band_labels = [
+        f"{int(row.band_index)} — {row.band_label or ''} ({row.site}/{row.sensor})"
+        for _, row in df_feature.iterrows()
+    ]
+    band_choice = st.selectbox("Select band for bronze summary", band_labels)
+    idx = band_labels.index(band_choice) if band_choice in band_labels else 0
+    selected = df_feature.iloc[idx]
 
-# Controls row
-c1,c2,c3,c4 = st.columns([1,1,1,2])
-with c1:
-    if st.button("⏵ Play" if not st.session_state.playing else "⏸ Pause"):
-        st.session_state.playing = not st.session_state.playing
-with c2:
-    if st.button("⟲ Reset view"):
-        st.session_state.view_f0 = float(freqs[0])
-        st.session_state.view_f1 = float(freqs[-1])
-with c3:
-    t_pos = st.slider("Time index", 0, meta["n_traces"]-1, st.session_state.t0)
-    st.session_state.t0 = t_pos
+    if st.button("Load bronze band summary"):
+        try:
+            df_summary = load_band_summary(
+                int(selected.band_index),
+                selected.mission_type,
+                selected.site,
+                selected.sensor,
+                selected.year,
+                selected.month,
+            )
+            st.session_state["summary_df"] = df_summary
+            st.success(f"Loaded {len(df_summary)} frequency bins for band {int(selected.band_index)}")
+        except Exception as exc:
+            st.error(f"Failed to load band summary: {exc}")
 
-# time window
-def time_window_indices(t0_idx, secs):
-    t0_val = rel_t[min(t0_idx, len(rel_t)-1)]
-    t1_val = t0_val + secs
-    t1_idx = int(np.searchsorted(rel_t, t1_val, side="right"))
-    t1_idx = min(max(t1_idx, t0_idx+1), len(rel_t))
-    return t0_idx, t1_idx
-
-t0_idx, t1_idx = time_window_indices(st.session_state.t0, window_s)
-
-# frequency window
-f0 = st.session_state.view_f0
-f1 = st.session_state.view_f1
-
-# summaries
-s_max, s_avg, s_min = load_summary(band)
-
-# choose tier for top chart and build figure
-tiers = load_tiers(band)
-pts, tier, mask = choose_tier(tiers, f0, f1, max_points=2200)
-
-# build top figure
-top = go.Figure()
-if follow_window:
-    f_slice, wf_win = slice_full(meta, freqs, t0_idx, t1_idx, f0, f1)
-    top.add_trace(go.Scatter(x=f_slice/1e6, y=wf_win.max(axis=0), name="Max"))
-    top.add_trace(go.Scatter(x=f_slice/1e6, y=wf_win.mean(axis=0), name="Avg"))
-    top.add_trace(go.Scatter(x=f_slice/1e6, y=wf_win.min(axis=0), name="Min"))
-    curve_y = wf_win.mean(axis=0) if pk_curve=="Avg" else wf_win.max(axis=0)
-    curve_x = f_slice
-else:
-    if tier is not None:
-        f_axis = np.asarray(tier["f_axis"])[mask]
-        top.add_trace(go.Scatter(x=f_axis/1e6, y=np.asarray(tier["max"])[mask], name="Max"))
-        top.add_trace(go.Scatter(x=f_axis/1e6, y=np.asarray(tier["avg"])[mask], name="Avg"))
-        top.add_trace(go.Scatter(x=f_axis/1e6, y=np.asarray(tier["min"])[mask], name="Min"))
-        curve_y = np.asarray(tier["avg"])[mask] if pk_curve=="Avg" else np.asarray(tier["max"])[mask]
-        curve_x = f_axis
-    else:
-        f_slice, wf_win = slice_full(meta, freqs, t0_idx, t1_idx, f0, f1)
-        top.add_trace(go.Scatter(x=f_slice/1e6, y=wf_win.max(axis=0), name="Max"))
-        top.add_trace(go.Scatter(x=f_slice/1e6, y=wf_win.mean(axis=0), name="Avg"))
-        top.add_trace(go.Scatter(x=f_slice/1e6, y=wf_win.min(axis=0), name="Min"))
-        curve_y = wf_win.mean(axis=0) if pk_curve=="Avg" else wf_win.max(axis=0)
-        curve_x = f_slice
-
-# peak finding
-peaks, props = find_peaks(curve_y, height=pk_height, prominence=pk_prom, distance=pk_dist)
-top.add_trace(go.Scatter(x=curve_x[peaks]/1e6, y=curve_y[peaks], mode="markers", name="Peaks", marker=dict(size=8, symbol="x")))
-top.update_layout(title=f"Band {band} — Traces & Peaks", xaxis_title="Frequency (MHz)", yaxis_title="dBm", height=380)
-
-top_ev = st.plotly_chart(top)
-
-# waterfall
-wf_faxis, wf_block = slice_full(meta, freqs, t0_idx, t1_idx, f0, f1, max_freq_points=1600)
-wf_fig = go.Figure(data=go.Heatmap(
-    x=wf_faxis/1e6, y=rel_t[t0_idx:t1_idx], z=wf_block,
-    zmin=vmin, zmax=vmax, colorscale="Inferno", colorbar=dict(title="dBm")
-))
-wf_fig.update_layout(title="Waterfall", xaxis_title="Frequency (MHz)", yaxis_title="Time (s)", height=520)
-st.plotly_chart(wf_fig)
-
-# markers & regions
-mrk = load_markers(band)
-with st.expander("Markers & Regions"):
-    mcols = st.columns([1,1,1,2])
-    with mcols[0]:
-        m_freq = st.number_input("Marker freq (MHz)", value=float((f0+f1)/2/1e6))
-    with mcols[1]:
-        m_label = st.text_input("Label", value="Marker")
-    with mcols[2]:
-        if st.button("➕ Add marker"):
-            mrk["markers"].append({"freq_hz": m_freq*1e6, "label": m_label})
-            save_markers(band, mrk)
-            st.success("Marker added.")
-    st.write("Regions use current view. Adjust zoom/pan on the top chart, then click save.")
-    r_label = st.text_input("Region label", value="Region of Interest")
-    if st.button("➕ Save region from current view"):
-        mrk["regions"].append({"f0_hz": float(f0), "f1_hz": float(f1), "label": r_label})
-        save_markers(band, mrk)
-        st.success("Region saved.")
-    # Show table of peaks
-    if len(peaks):
-        st.write("Detected peaks (current curve):")
-        import pandas as pd
-        df = pd.DataFrame({"freq_MHz": curve_x[peaks]/1e6, "level_dBm": curve_y[peaks]})
-        st.dataframe(df, width='stretch')
-    st.json(mrk)
-
-# playback loop
-if st.session_state.playing:
-    st.session_state.t0 = min(st.session_state.t0 + 1, meta["n_traces"]-2)
-    time.sleep(1.0/float(max(speed_fps,1)))
-    st.rerun()
+    df_summary = st.session_state.get("summary_df")
+    if df_summary is not None and len(df_summary):
+        # Build frequency axis using first row's start/step
+        start_hz = float(df_summary.start_hz.iloc[0])
+        step_hz = float(df_summary.step_hz.iloc[0])
+        df_summary["freq_mhz"] = (start_hz + (df_summary.idx - 1) * step_hz) / 1e6
+        fig = px.line(df_summary, x="freq_mhz", y="power_mean", title="Mean power (dBm)")
+        fig.add_scatter(x=df_summary["freq_mhz"], y=df_summary["power_min"], name="Min", line=dict(color="orange"))
+        fig.add_scatter(x=df_summary["freq_mhz"], y=df_summary["power_max"], name="Max", line=dict(color="red"))
+        fig.update_layout(xaxis_title="Frequency (MHz)", yaxis_title="dBm")
+        st.plotly_chart(fig, use_container_width=True)
