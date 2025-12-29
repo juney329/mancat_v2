@@ -119,6 +119,59 @@ Flags:
 - `--bronze-prefix <prefix>` to override the default derived prefix (`bronze/mission_type=<m>/site=<s>/sensor=<sensor>/`)
 - `--dry-run` or `--list-bands` to inspect matching objects without processing.
 
+## Precompute Band Statistics (Gold Layer)
+
+`mancat_v2_compute_band_stats.py` precomputes comprehensive band statistics from bronze data and stores them in the gold layer for fast retrieval. This significantly speeds up the frontend by avoiding on-the-fly computation.
+
+**Dependencies**: `duckdb`, `pyarrow`, `pyyaml`, `minio`
+
+**Features**:
+- Per-frequency bin statistics: min, max, avg, percentiles (p25, p50, p75, p95, p99)
+- Occupancy metrics (configurable thresholds):
+  - Time occupancy: % of traces where power > threshold
+  - Frequency occupancy: % of frequency bins with activity > threshold
+  - Power occupancy: Count of readings above power threshold
+- Threshold crossings: Count of times power crosses threshold per frequency bin
+- Aggregated metadata: trace count, time range, frequency range, days, run_ids
+
+**Configuration** (`band_stats_config.yaml`):
+```yaml
+power_threshold: -100.0              # Power threshold for occupancy (dBm)
+time_occupancy_threshold: -100.0     # Threshold for time-based occupancy
+frequency_occupancy_threshold: -100.0 # Threshold for frequency occupancy
+percentiles: [25, 50, 75, 95, 99]    # Percentiles to compute
+metrics:
+  min_max_avg: true
+  percentiles: true
+  time_occupancy: true
+  frequency_occupancy: true
+  power_occupancy: true
+  threshold_crossings: true
+```
+
+**Example**:
+```bash
+python mancat_v2_compute_band_stats.py \
+  --site MKAB \
+  --year 2025 \
+  --month 11 \
+  --endpoint 10.10.6.50:9000 \
+  --access-key <KEY> \
+  --secret-key <SECRET> \
+  --bucket rf-lake \
+  --config band_stats_config.yaml
+```
+
+**Optional filters**:
+- `--mission-type <TYPE>` - Filter by mission_type
+- `--sensor <SENSOR>` - Filter by sensor
+- `--band-index <IDX>` - Process only specific band
+- `--secure` - Use SSL/TLS for MinIO
+
+**Output**: Creates `gold/survey/{site}/{YYYY-MM}/band{idx}_stats.parquet` files with precomputed statistics.
+
+**Backend Integration**: The `/bronze/band/{band_index}/summary` endpoint automatically checks for precomputed gold data first (fastest), then falls back to `feature.parquet` (fast, no per-frequency stats), then bronze scan (slowest, full computation). Use `?force_bronze=true` to skip gold data and force on-the-fly computation.
+
 ## MinIO/DuckDB visualization (backend)
 
 The backend now provides endpoints to query gold feature parquet and optional bronze band summaries via DuckDB/httpfs:
@@ -133,9 +186,16 @@ The backend now provides endpoints to query gold feature parquet and optional br
 ### Bronze endpoints (optional, slower)
 
 - `GET /bronze/bands` — list band objects under bronze prefix
-- `GET /bronze/band/{band_index}/summary` — compute per-frequency min/avg/max from bronze `band*.parquet`. Use `?use_feature=true` (default) to prefer `feature.parquet` stats; set `use_feature=false` to force full bronze scan for per-frequency breakdowns.
+- `GET /bronze/band/{band_index}/summary` — Returns per-frequency statistics. Checks in order:
+  1. Precomputed gold stats (`band{idx}_stats.parquet`) - fastest, includes percentiles and occupancy metrics
+  2. `feature.parquet` - fast, band-level stats only (no per-frequency breakdown)
+  3. Bronze scan - slowest, full on-the-fly computation
+  
+  Query parameters:
+  - `use_feature=true` (default) - Allow using feature.parquet fallback
+  - `force_bronze=true` - Skip all gold data, force bronze scan
 
-**Note**: The bronze summary endpoint uses `feature.parquet` by default (fast, band-level stats only). Full bronze scans (per-frequency stats) are only performed when `feature.parquet` is unavailable or `use_feature=false` is set, as they are much slower.
+**Note**: Precomputed gold stats provide the best performance with rich metrics (percentiles, occupancy). Run `mancat_v2_compute_band_stats.py` to generate these files.
 
 ## Backend: MinIO + DuckDB feature/bronze APIs
 

@@ -1,142 +1,159 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
-  FeatureRow,
-  BronzeBandSummary,
-  FeatureLocations,
-  FeatureMonths,
-  getFeature,
-  getBronzeBandSummary,
-  getFeatureLocations,
-  getFeatureMonths
+  listBronzeSites,
+  listBronzeMonths,
+  listBandsBySiteMonth,
+  type BronzeBandInfo,
+  uploadAssignments,
 } from '../lib/api';
 
 type Status = 'idle' | 'loading' | 'error' | 'ready';
 
 export default function FeaturePage() {
-  const [locations, setLocations] = useState<string[]>([]);
-  const [location, setLocation] = useState<string>('');
+  const [sites, setSites] = useState<string[]>([]);
+  const [site, setSite] = useState<string>('');
   const [months, setMonths] = useState<string[]>([]);
   const [month, setMonth] = useState<string>('');
-  const [rows, setRows] = useState<FeatureRow[]>([]);
+  const [year, setYear] = useState<string>('');
+  const [bands, setBands] = useState<BronzeBandInfo[]>([]);
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<BronzeBandSummary | null>(null);
-  const [summaryStatus, setSummaryStatus] = useState<Status>('idle');
+  const [uploadStatus, setUploadStatus] = useState<Status>('idle');
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // Load locations on mount
+  // Load sites on mount
   useEffect(() => {
-    getFeatureLocations()
+    listBronzeSites()
       .then((data) => {
-        setLocations(data.locations);
-        if (data.locations.length > 0 && !location) {
-          setLocation(data.locations[0]);
+        setSites(data.sites);
+        if (data.sites.length > 0 && !site) {
+          setSite(data.sites[0]);
         }
       })
       .catch((err) => {
-        console.error('Failed to load locations', err);
+        console.error('Failed to load sites', err);
+        setError('Failed to load sites from bronze');
       });
   }, []);
 
-  // Load months when location changes
+  // Load months when site changes
   useEffect(() => {
-    if (!location) {
+    if (!site) {
       setMonths([]);
       setMonth('');
+      setYear('');
+      setBands([]);
       return;
     }
-    getFeatureMonths(location)
+    // Reset month and clear bands when site changes
+    setMonth('');
+    setYear('');
+    setBands([]);
+    listBronzeMonths(site)
       .then((data) => {
         setMonths(data.months);
-        if (data.months.length > 0 && !month) {
-          setMonth(data.months[0]);
-        } else if (!data.months.includes(month)) {
-          setMonth('');
+        if (data.months.length > 0) {
+          const firstMonth = data.months[0];
+          setMonth(firstMonth);
         }
       })
       .catch((err) => {
         console.error('Failed to load months', err);
+        setError('Failed to load months for site');
         setMonths([]);
+        setMonth('');
       });
-  }, [location]);
+  }, [site]);
 
-  const loadFeature = useCallback(() => {
-    if (!location || !month) {
-      setError('Please select location and month');
+  // Parse year and month from YYYY-MM format
+  useEffect(() => {
+    if (month && month.includes('-')) {
+      const [y, m] = month.split('-');
+      setYear(y);
+      // month state already contains YYYY-MM, but we also need just MM for API calls
+    }
+  }, [month]);
+
+  const loadBands = useCallback(() => {
+    if (!site || !month) {
+      setError('Please select site and month');
       return;
     }
+    
+    // Extract year and month from YYYY-MM format
+    const [y, m] = month.split('-');
+    if (!y || !m) {
+      setError('Invalid month format');
+      return;
+    }
+
     setStatus('loading');
     setError(null);
-    getFeature({ location, month })
-      .then((r) => {
-        setRows(r);
+    listBandsBySiteMonth(site, y, m)
+      .then((data) => {
+        setBands(data.bands);
         setStatus('ready');
       })
       .catch((err) => {
-        setError(err?.message ?? 'Failed to load feature.parquet');
+        setError(err?.message ?? 'Failed to load bands');
         setStatus('error');
       });
-  }, [location, month]);
+  }, [site, month]);
 
-  const loadSummary = useCallback(
-    async (row: FeatureRow) => {
-      setSummaryStatus('loading');
-      setError(null);
+  const handleFileUpload = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file || !site || !month) {
+        setUploadError('Please select site and month before uploading');
+        return;
+      }
+
+      setUploadStatus('loading');
+      setUploadError(null);
       try {
-        const summary = await getBronzeBandSummary(row.band_index, {
-          mission_type: row.mission_type,
-          site: row.site,
-          sensor: row.sensor,
-          year: row.year,
-          month: row.month,
-          use_feature: true  // Use feature.parquet by default to avoid slow bronze scan
-        });
-        setSummary(summary);
-        setSummaryStatus('ready');
+        // Use site as location for assignments (legacy compatibility)
+        const result = await uploadAssignments(site, month, file);
+        setUploadStatus('ready');
+        alert(`Upload successful! ${result.rows} assignments uploaded.`);
+        event.target.value = ''; // Reset file input
       } catch (err: any) {
-        setError(err?.message ?? 'Failed to load band summary');
-        setSummaryStatus('error');
+        setUploadError(err?.message ?? 'Upload failed');
+        setUploadStatus('error');
       }
     },
-    [setSummary]
+    [site, month]
   );
 
-  const formatDateTime = (unixTime: number | null): string => {
-    if (unixTime === null || unixTime === undefined) return '—';
-    return new Date(unixTime * 1000).toLocaleString();
+  const handleBandClick = (band: BronzeBandInfo) => {
+    const [y, m] = month.split('-');
+    const url = `/feature-bands/${site}/${y}/${m}/${band.band_index}?mission_type=${encodeURIComponent(band.mission_type)}&sensor=${encodeURIComponent(band.sensor)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
-
-  const chartPoints = useMemo(() => {
-    if (!summary) return [];
-    return summary.stats.map((p) => ({
-      x: p.freq_hz / 1e6,
-      y: p.power_mean
-    }));
-  }, [summary]);
 
   return (
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">Gold feature view</p>
-          <h1>Feature parquet (MinIO)</h1>
-          <p className="muted">Query gold/survey/&lt;location&gt;/YYYY-MM/feature.parquet and drill into bronze band summaries via DuckDB/httpfs.</p>
+          <p className="eyebrow">Bronze band discovery</p>
+          <h1>Band Explorer (MinIO Bronze)</h1>
+          <p className="muted">Browse bands from bronze data by site and month. Click a band to view detailed analysis with assignments overlay.</p>
         </div>
         <div className="controls">
           <label className="control">
-            <span>Location</span>
-            <select value={location} onChange={(e) => setLocation(e.target.value)}>
-              <option value="">Select location</option>
-              {locations.map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
+            <span>Site</span>
+            <select value={site} onChange={(e) => setSite(e.target.value)}>
+              <option value="">Select site</option>
+              {sites.map((s) => (
+                <option key={s} value={s}>
+                  {s}
                 </option>
               ))}
             </select>
           </label>
           <label className="control">
-            <span>Month</span>
-            <select value={month} onChange={(e) => setMonth(e.target.value)} disabled={!location}>
+            <span>Month (YYYY-MM)</span>
+            <select value={month} onChange={(e) => setMonth(e.target.value)} disabled={!site}>
               <option value="">Select month</option>
               {months.map((m) => (
                 <option key={m} value={m}>
@@ -145,63 +162,52 @@ export default function FeaturePage() {
               ))}
             </select>
           </label>
-          <button onClick={loadFeature} className="button" disabled={!location || !month || status === 'loading'}>
-            {status === 'loading' ? 'Loading…' : 'Load feature'}
+          <button onClick={loadBands} className="button" disabled={!site || !month || status === 'loading'}>
+            {status === 'loading' ? 'Loading Bands…' : 'Load Bands'}
           </button>
+          <label className="control">
+            <span>Upload Assignments CSV</span>
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileUpload}
+              disabled={!site || !month || uploadStatus === 'loading'}
+              style={{ fontSize: '0.9em' }}
+            />
+          </label>
         </div>
         {error && <p className="error">{error}</p>}
+        {uploadError && <p className="error">Upload error: {uploadError}</p>}
+        {uploadStatus === 'loading' && <p className="muted">Uploading assignments CSV...</p>}
       </header>
 
       <section className="band-grid">
-        {rows.map((row) => (
-          <article key={`${row.location}-${row.month}-${row.band_index}`} className="band-card">
+        {bands.map((band) => (
+          <article key={`${band.band_index}-${band.mission_type}-${band.sensor}`} className="band-card">
             <div className="band-card__heading">
               <h2>
-                {row.band_label ?? `band${row.band_index}`} ({(row.start_hz / 1e6).toFixed(3)}-
-                {(row.stop_hz / 1e6).toFixed(3)} MHz)
+                {band.band_label ?? `band${band.band_index}`}
               </h2>
-              <span className="badge">band {row.band_index}</span>
+              <span className="badge">band {band.band_index}</span>
             </div>
             <dl className="band-card__meta">
-              <MetaRow label="Traces" value={row.n_traces} />
-              <MetaRow label="Freq bins" value={row.n_freqs} />
-              <MetaRow label="Power (min/max/mean)" value={`${row.power_min.toFixed(1)} / ${row.power_max.toFixed(1)} / ${row.power_mean.toFixed(1)} dBm`} />
-              <MetaRow label="Time span" value={`${formatDateTime(row.unix_time_min)} – ${formatDateTime(row.unix_time_max)}`} />
-              <MetaRow label="Mission" value={row.mission_type} />
-              <MetaRow label="Site / Sensor" value={`${row.site} / ${row.sensor}`} />
-              <MetaRow label="Days" value={row.days.join(', ') || '—'} />
+              <MetaRow label="Mission Type" value={band.mission_type} />
+              <MetaRow label="Site / Sensor" value={`${site} / ${band.sensor}`} />
+              <MetaRow label="Month" value={month} />
+              <MetaRow label="Days" value={band.days.join(', ') || '—'} />
+              <MetaRow label="Run IDs" value={band.run_ids.join(', ') || '—'} />
             </dl>
-            <button className="button-link" onClick={() => loadSummary(row)}>
-              {summaryStatus === 'loading' ? 'Loading…' : 'Load band summary'}
+            <button
+              onClick={() => handleBandClick(band)}
+              className="button-link"
+            >
+              Open Band Detail (New Tab)
             </button>
           </article>
         ))}
-        {rows.length === 0 && status === 'ready' && <p className="muted">No feature rows found for that location/month.</p>}
+        {bands.length === 0 && status === 'ready' && <p className="muted">No bands found for that site/month.</p>}
+        {bands.length === 0 && status === 'idle' && <p className="muted">Select a site and month, then click "Load Bands" to view available bands.</p>}
       </section>
-
-      {summary && (
-        <section className="band-card">
-          <div className="band-card__heading">
-            <h2>
-              Band {summary.band_index} {summary.band_label ? `(${summary.band_label})` : ''} — summary
-              {summary.source && (
-                <span style={{ fontSize: '0.8em', marginLeft: '0.5em', opacity: 0.7 }}>
-                  (from {summary.source})
-                </span>
-              )}
-            </h2>
-            <span className="badge">summary</span>
-          </div>
-          <MetaRow label="Traces" value={summary.n_traces} />
-          <MetaRow label="Freq range" value={`${(summary.start_hz / 1e6).toFixed(3)} - ${(summary.stop_hz / 1e6).toFixed(3)} MHz`} />
-          <MetaRow label="Days" value={summary.days.join(', ') || '—'} />
-          {summary.stats && summary.stats.length > 0 ? (
-            <MiniLineChart points={chartPoints} />
-          ) : (
-            <p className="muted">Per-frequency stats not available (using feature.parquet aggregate stats only)</p>
-          )}
-        </section>
-      )}
     </main>
   );
 }
@@ -214,29 +220,3 @@ function MetaRow({ label, value }: { label: string; value: string | number }) {
     </div>
   );
 }
-
-function MiniLineChart({ points }: { points: { x: number; y: number }[] }) {
-  if (!points.length) return <p className="muted">No points</p>;
-  const width = 800;
-  const height = 260;
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const scaleX = (x: number) => ((x - minX) / (maxX - minX || 1)) * width;
-  const scaleY = (y: number) => height - ((y - minY) / (maxY - minY || 1)) * height;
-  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${scaleX(p.x)},${scaleY(p.y)}`).join(' ');
-  return (
-    <svg width={width} height={height} role="img" aria-label="Mean power vs frequency">
-      <rect width={width} height={height} fill="#0b1021" rx="8" />
-      <path d={path} stroke="#5ad" strokeWidth={2} fill="none" />
-      <text x={8} y={20} fill="#9fb">Mean power (dBm)</text>
-      <text x={width - 150} y={height - 8} fill="#9fb">
-        Freq (MHz)
-      </text>
-    </svg>
-  );
-}
-

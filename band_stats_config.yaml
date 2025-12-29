@@ -1,0 +1,31 @@
+# Configuration for band statistics precomputation
+# Thresholds and metrics to compute
+
+# Power threshold for occupancy calculations (dBm)
+power_threshold: -90.0
+
+# Time occupancy threshold (power level to consider "active" for time-based occupancy)
+time_occupancy_threshold: -80.0
+
+# Frequency occupancy threshold (power level for frequency bin activity)
+frequency_occupancy_threshold: -80.0
+
+# Percentiles to compute
+percentiles: [25, 50, 75, 95, 99]
+
+# Enable/disable metrics
+metrics:
+  # Basic statistics (always enabled)
+  min_max_avg: true
+  
+  # Percentile calculations
+  percentiles: true
+  
+  # Occupancy metrics
+  time_occupancy: true      # % of traces where power > threshold per frequency bin
+  frequency_occupancy: true  # Activity percentage per frequency bin
+  power_occupancy: true      # Count of readings above power threshold per frequency bin
+  
+  # Threshold crossings
+  threshold_crossings: true  # Number of times power crossed threshold per frequency bin
+

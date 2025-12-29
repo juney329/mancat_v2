@@ -2,6 +2,7 @@ import os
 import re
 from typing import Dict, List, Set
 
+import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 
@@ -123,8 +124,91 @@ def band_summary(
     day: str | None = Query(None),
     run_id: str | None = Query(None),
     use_feature: bool = Query(True, description="Use feature.parquet if available; else scan bronze"),
+    force_bronze: bool = Query(False, description="Force bronze scan, skip precomputed gold data"),
 ):
-    # Try feature.parquet first if requested
+    # First, try precomputed gold stats (fastest path with per-frequency data)
+    if not force_bronze:
+        try:
+            norm_month = f"{year}-{month}"
+            stats_obj = f"s3://{bucket_name()}/gold/survey/{site}/{norm_month}/band{band_index}_stats.parquet"
+            con = get_connection()
+            
+            # Check if file exists by attempting to read metadata
+            try:
+                stats_df = con.execute("SELECT * FROM read_parquet(?) LIMIT 1", [stats_obj]).fetchdf()
+                
+                if not stats_df.empty:
+                    # Read full stats
+                    full_stats_df = con.execute("SELECT * FROM read_parquet(?)", [stats_obj]).fetchdf()
+                    
+                    # Extract metadata from schema (stored in custom metadata)
+                    # For now, we'll get basic info from the data
+                    stats_list = []
+                    for _, row in full_stats_df.iterrows():
+                        stat_entry = {
+                            "freq_hz": float(row.get("freq_hz", 0)),
+                            "power_min": float(row.get("power_min", 0)),
+                            "power_max": float(row.get("power_max", 0)),
+                            "power_mean": float(row.get("power_mean", 0)),
+                        }
+                        # Add percentiles if present
+                        for p in [25, 50, 75, 95, 99]:
+                            col = f"power_p{p}"
+                            if col in row:
+                                stat_entry[col] = float(row[col]) if pd.notna(row[col]) else None
+                        # Add occupancy metrics if present
+                        if "time_occupancy_pct" in row:
+                            stat_entry["time_occupancy_pct"] = float(row["time_occupancy_pct"]) if pd.notna(row["time_occupancy_pct"]) else None
+                        if "frequency_occupancy_pct" in row:
+                            stat_entry["frequency_occupancy_pct"] = float(row["frequency_occupancy_pct"]) if pd.notna(row["frequency_occupancy_pct"]) else None
+                        if "power_occupancy_count" in row:
+                            stat_entry["power_occupancy_count"] = int(row["power_occupancy_count"]) if pd.notna(row["power_occupancy_count"]) else None
+                        if "threshold_crossings" in row:
+                            stat_entry["threshold_crossings"] = int(row["threshold_crossings"]) if pd.notna(row["threshold_crossings"]) else None
+                        stats_list.append(stat_entry)
+                    
+                    # Extract metadata from first row (metadata columns have meta_ prefix)
+                    first_row = full_stats_df.iloc[0]
+                    
+                    meta_site = first_row.get("meta_site", "")
+                    meta_band_label = first_row.get("meta_band_label", "")
+                    meta_total_traces = first_row.get("meta_total_traces")
+                    meta_time_min = first_row.get("meta_time_min")
+                    meta_time_max = first_row.get("meta_time_max")
+                    meta_freq_start = first_row.get("meta_freq_start_hz")
+                    meta_freq_stop = first_row.get("meta_freq_stop_hz")
+                    meta_freq_step = first_row.get("meta_freq_step_hz")
+                    meta_days_str = first_row.get("meta_days", "")
+                    meta_run_ids_str = first_row.get("meta_run_ids", "")
+                    
+                    # Parse comma-separated lists
+                    days_list = [d.strip() for d in meta_days_str.split(",")] if meta_days_str else []
+                    days_list = [d for d in days_list if d]  # Remove empty strings
+                    run_ids_list = [r.strip() for r in meta_run_ids_str.split(",")] if meta_run_ids_str else []
+                    run_ids_list = [r for r in run_ids_list if r]  # Remove empty strings
+                    
+                    return jsonable_encoder({
+                        "band_index": band_index,
+                        "band_label": meta_band_label if meta_band_label else None,
+                        "n_traces": int(meta_total_traces) if meta_total_traces is not None else None,
+                        "start_hz": float(meta_freq_start) if meta_freq_start is not None else None,
+                        "stop_hz": float(meta_freq_stop) if meta_freq_stop is not None else None,
+                        "step_hz": float(meta_freq_step) if meta_freq_step is not None else None,
+                        "unix_time_min": int(meta_time_min) if meta_time_min is not None else None,
+                        "unix_time_max": int(meta_time_max) if meta_time_max is not None else None,
+                        "days": days_list,
+                        "run_ids": run_ids_list,
+                        "stats": stats_list,
+                        "source": "precomputed_gold",
+                    })
+            except Exception:
+                # File doesn't exist or can't be read, fall through
+                pass
+        except Exception:
+            # Fall through to other methods if precomputed data unavailable
+            pass
+    
+    # Try feature.parquet next if requested (band-level stats only)
     if use_feature:
         try:
             # Use site as location for feature path
@@ -244,4 +328,118 @@ def band_summary(
         "source": "bronze",
     }
     return jsonable_encoder(payload)
+
+
+@router.get("/sites")
+def list_sites():
+    """List all unique sites from bronze data across all mission_types and sensors."""
+    client = get_minio_client()
+    bucket = bucket_name()
+    prefix = "bronze/"
+    sites = set()
+    
+    for obj in client.list_objects(bucket, prefix=prefix, recursive=True):
+        path_parts = obj.object_name.split("/")
+        parts = _parse_partitions(path_parts)
+        site = parts.get("site")
+        if site:
+            sites.add(site)
+    
+    return jsonable_encoder({"sites": sorted(sites)})
+
+
+@router.get("/months")
+def list_months(site: str = Query(..., description="Site to list months for")):
+    """List all unique months (YYYY-MM) for a given site from bronze data."""
+    client = get_minio_client()
+    bucket = bucket_name()
+    prefix = f"bronze/"
+    months = set()
+    
+    for obj in client.list_objects(bucket, prefix=prefix, recursive=True):
+        path_parts = obj.object_name.split("/")
+        parts = _parse_partitions(path_parts)
+        if parts.get("site") != site:
+            continue
+        year = parts.get("year")
+        month = parts.get("month")
+        if year and month:
+            # Validate year is 4 digits and month is 2 digits
+            if len(year) == 4 and year.isdigit() and len(month) == 2 and month.isdigit():
+                months.add(f"{year}-{month}")
+    
+    return jsonable_encoder({"site": site, "months": sorted(months)})
+
+
+@router.get("/bands-by-site-month")
+def list_bands_by_site_month(
+    site: str = Query(..., description="Site"),
+    year: str = Query(..., description="Year (YYYY)"),
+    month: str = Query(..., description="Month (MM)"),
+):
+    """List all bands available for a site/year/month across all mission_types and sensors."""
+    client = get_minio_client()
+    bucket = bucket_name()
+    prefix = f"bronze/"
+    band_re = re.compile(r"band(\d+)\.parquet$")
+    bands: Dict[str, Dict[str, object]] = {}  # Key: (band_index, mission_type, sensor)
+    
+    for obj in client.list_objects(bucket, prefix=prefix, recursive=True):
+        name = obj.object_name
+        if not name.endswith(".parquet"):
+            continue
+        fname = os.path.basename(name)
+        m = band_re.match(fname)
+        if not m:
+            continue
+        
+        path_parts = name.split("/")
+        parts = _parse_partitions(path_parts)
+        
+        if parts.get("site") != site or parts.get("year") != year or parts.get("month") != month:
+            continue
+        
+        band_idx = int(m.group(1))
+        mission_type = parts.get("mission_type", "")
+        sensor = parts.get("sensor", "")
+        band_label = parts.get("band", "")
+        day_part = parts.get("day", "")
+        run_id = parts.get("run_id", "")
+        
+        # Create a unique key per band_index, mission_type, sensor combination
+        key = f"{band_idx}|{mission_type}|{sensor}"
+        
+        if key not in bands:
+            bands[key] = {
+                "band_index": band_idx,
+                "band_label": band_label,
+                "mission_type": mission_type,
+                "sensor": sensor,
+                "year": year,
+                "month": month,
+                "days": set(),
+                "run_ids": set(),
+            }
+        
+        if day_part:
+            bands[key]["days"].add(day_part)
+        if run_id:
+            bands[key]["run_ids"].add(run_id)
+    
+    # Convert sets to sorted lists and sort by band_index
+    result = []
+    for b in bands.values():
+        result.append({
+            "band_index": b["band_index"],
+            "band_label": b.get("band_label"),
+            "mission_type": b["mission_type"],
+            "sensor": b["sensor"],
+            "year": b["year"],
+            "month": b["month"],
+            "days": sorted(b["days"]),
+            "run_ids": sorted(b["run_ids"]),
+        })
+    
+    result.sort(key=lambda x: (x["band_index"], x["mission_type"], x["sensor"]))
+    return jsonable_encoder({"site": site, "year": year, "month": month, "count": len(result), "bands": result})
 

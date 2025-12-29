@@ -289,3 +289,122 @@ export async function getBronzeBandSummary(
   if (params.use_feature !== undefined) query.set('use_feature', params.use_feature.toString());
   return fetchJSON<BronzeBandSummary>(`/bronze/band/${band_index}/summary?${query.toString()}`);
 }
+
+export interface Assignment {
+  lat: number;
+  long: number;
+  center_freq_hz: number;
+  bandwidth_hz: number;
+  label: string;
+}
+
+export interface AssignmentsResponse {
+  location: string;
+  month: string;
+  assignments: Assignment[];
+}
+
+export async function uploadAssignments(
+  location: string,
+  month: string,
+  file: File
+): Promise<{ message: string; location: string; month: string; rows: number; path: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${API_BASE}/assignments/upload?location=${encodeURIComponent(location)}&month=${encodeURIComponent(month)}`, {
+    method: 'POST',
+    body: formData
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Upload failed: ${text}`);
+  }
+  return response.json();
+}
+
+export async function getAssignments(location: string, month: string): Promise<AssignmentsResponse> {
+  const query = new URLSearchParams({ location, month });
+  return fetchJSON<AssignmentsResponse>(`/assignments?${query.toString()}`);
+}
+
+export async function createAssignment(
+  location: string,
+  month: string,
+  assignment: Assignment
+): Promise<AssignmentsResponse> {
+  const query = new URLSearchParams({ location, month });
+  const response = await fetch(`${API_BASE}/assignments?${query.toString()}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(assignment)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to create assignment: ${text}`);
+  }
+  return (await response.json()) as AssignmentsResponse;
+}
+
+export async function deleteAssignment(
+  location: string,
+  month: string,
+  assignment: { center_freq_hz: number; bandwidth_hz: number }
+): Promise<AssignmentsResponse> {
+  const query = new URLSearchParams({ location, month });
+  const response = await fetch(`${API_BASE}/assignments?${query.toString()}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(assignment)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to delete assignment: ${text}`);
+  }
+  return (await response.json()) as AssignmentsResponse;
+}
+
+export interface BronzeSitesResponse {
+  sites: string[];
+}
+
+export interface BronzeMonthsResponse {
+  site: string;
+  months: string[];
+}
+
+export interface BronzeBandInfo {
+  band_index: number;
+  band_label?: string | null;
+  mission_type: string;
+  sensor: string;
+  year: string;
+  month: string;
+  days: string[];
+  run_ids: string[];
+}
+
+export interface BronzeBandsBySiteMonthResponse {
+  site: string;
+  year: string;
+  month: string;
+  count: number;
+  bands: BronzeBandInfo[];
+}
+
+export async function listBronzeSites(): Promise<BronzeSitesResponse> {
+  return fetchJSON<BronzeSitesResponse>('/bronze/sites');
+}
+
+export async function listBronzeMonths(site: string): Promise<BronzeMonthsResponse> {
+  const query = new URLSearchParams({ site });
+  return fetchJSON<BronzeMonthsResponse>(`/bronze/months?${query.toString()}`);
+}
+
+export async function listBandsBySiteMonth(site: string, year: string, month: string): Promise<BronzeBandsBySiteMonthResponse> {
+  const query = new URLSearchParams({ site, year, month });
+  return fetchJSON<BronzeBandsBySiteMonthResponse>(`/bronze/bands-by-site-month?${query.toString()}`);
+}
