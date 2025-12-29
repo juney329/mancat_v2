@@ -51,6 +51,14 @@ def get_duckdb_connection(endpoint: str, access_key: str, secret_key: str, secur
     con.execute("SET s3_access_key_id=$1;", [access_key])
     con.execute("SET s3_secret_access_key=$1;", [secret_key])
     con.execute("SET s3_use_ssl=$1;", ["true" if secure else "false"])
+
+    # Memory and performance optimizations to prevent OOM
+    # Increase memory limit (adjust based on available RAM, leave some for OS)
+    con.execute("SET memory_limit='50GB';")  # Adjust to match your VM's RAM
+    # Reduce threads to lower memory usage
+    con.execute("SET threads=16;")  # Adjust based on your CPU cores
+    # Disable insertion-order preservation to save memory
+    con.execute("SET preserve_insertion_order=false;")
     return con
 
 
