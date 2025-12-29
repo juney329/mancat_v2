@@ -74,6 +74,15 @@ export interface BronzeBandInfo {
   object_keys: string[];
 }
 
+export interface FeatureLocations {
+  locations: string[];
+}
+
+export interface FeatureMonths {
+  location: string;
+  months: string[];
+}
+
 export interface BronzeBandSummary {
   band_index: number;
   band_label?: string | null;
@@ -83,9 +92,9 @@ export interface BronzeBandSummary {
   step_hz: number;
   unix_time_min: number | null;
   unix_time_max: number | null;
-  run_ids: string[];
   days: string[];
   stats: { freq_hz: number; power_min: number; power_max: number; power_mean: number }[];
+  source?: string;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:8000';
@@ -246,6 +255,15 @@ export async function listBronzeBands(params: {
   return fetchJSON<{ count: number; bands: BronzeBandInfo[] }>(`/bronze/bands?${query.toString()}`);
 }
 
+export async function getFeatureLocations(): Promise<FeatureLocations> {
+  return fetchJSON<FeatureLocations>('/feature/locations');
+}
+
+export async function getFeatureMonths(location: string): Promise<FeatureMonths> {
+  const query = new URLSearchParams({ location });
+  return fetchJSON<FeatureMonths>(`/feature/months?${query.toString()}`);
+}
+
 export async function getBronzeBandSummary(
   band_index: number,
   params: {
@@ -256,6 +274,7 @@ export async function getBronzeBandSummary(
     month: string;
     day?: string;
     run_id?: string;
+    use_feature?: boolean;
   }
 ): Promise<BronzeBandSummary> {
   const query = new URLSearchParams({
@@ -267,5 +286,6 @@ export async function getBronzeBandSummary(
   });
   if (params.day) query.set('day', params.day);
   if (params.run_id) query.set('run_id', params.run_id);
+  if (params.use_feature !== undefined) query.set('use_feature', params.use_feature.toString());
   return fetchJSON<BronzeBandSummary>(`/bronze/band/${band_index}/summary?${query.toString()}`);
 }

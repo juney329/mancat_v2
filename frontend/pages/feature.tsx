@@ -1,24 +1,70 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   FeatureRow,
   BronzeBandSummary,
+  FeatureLocations,
+  FeatureMonths,
   getFeature,
-  getBronzeBandSummary
+  getBronzeBandSummary,
+  getFeatureLocations,
+  getFeatureMonths
 } from '../lib/api';
 
 type Status = 'idle' | 'loading' | 'error' | 'ready';
 
 export default function FeaturePage() {
-  const [location, setLocation] = useState('MKAB');
-  const [month, setMonth] = useState('2025-11');
+  const [locations, setLocations] = useState<string[]>([]);
+  const [location, setLocation] = useState<string>('');
+  const [months, setMonths] = useState<string[]>([]);
+  const [month, setMonth] = useState<string>('');
   const [rows, setRows] = useState<FeatureRow[]>([]);
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<BronzeBandSummary | null>(null);
   const [summaryStatus, setSummaryStatus] = useState<Status>('idle');
 
+  // Load locations on mount
+  useEffect(() => {
+    getFeatureLocations()
+      .then((data) => {
+        setLocations(data.locations);
+        if (data.locations.length > 0 && !location) {
+          setLocation(data.locations[0]);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load locations', err);
+      });
+  }, []);
+
+  // Load months when location changes
+  useEffect(() => {
+    if (!location) {
+      setMonths([]);
+      setMonth('');
+      return;
+    }
+    getFeatureMonths(location)
+      .then((data) => {
+        setMonths(data.months);
+        if (data.months.length > 0 && !month) {
+          setMonth(data.months[0]);
+        } else if (!data.months.includes(month)) {
+          setMonth('');
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load months', err);
+        setMonths([]);
+      });
+  }, [location]);
+
   const loadFeature = useCallback(() => {
+    if (!location || !month) {
+      setError('Please select location and month');
+      return;
+    }
     setStatus('loading');
     setError(null);
     getFeature({ location, month })
@@ -42,7 +88,8 @@ export default function FeaturePage() {
           site: row.site,
           sensor: row.sensor,
           year: row.year,
-          month: row.month
+          month: row.month,
+          use_feature: true  // Use feature.parquet by default to avoid slow bronze scan
         });
         setSummary(summary);
         setSummaryStatus('ready');
@@ -53,6 +100,11 @@ export default function FeaturePage() {
     },
     [setSummary]
   );
+
+  const formatDateTime = (unixTime: number | null): string => {
+    if (unixTime === null || unixTime === undefined) return '—';
+    return new Date(unixTime * 1000).toLocaleString();
+  };
 
   const chartPoints = useMemo(() => {
     if (!summary) return [];
@@ -73,13 +125,27 @@ export default function FeaturePage() {
         <div className="controls">
           <label className="control">
             <span>Location</span>
-            <input value={location} onChange={(e) => setLocation(e.target.value)} />
+            <select value={location} onChange={(e) => setLocation(e.target.value)}>
+              <option value="">Select location</option>
+              {locations.map((loc) => (
+                <option key={loc} value={loc}>
+                  {loc}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="control">
-            <span>Month (YYYY-MM)</span>
-            <input value={month} onChange={(e) => setMonth(e.target.value)} />
+            <span>Month</span>
+            <select value={month} onChange={(e) => setMonth(e.target.value)} disabled={!location}>
+              <option value="">Select month</option>
+              {months.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
           </label>
-          <button onClick={loadFeature} className="button">
+          <button onClick={loadFeature} className="button" disabled={!location || !month || status === 'loading'}>
             {status === 'loading' ? 'Loading…' : 'Load feature'}
           </button>
         </div>
@@ -100,11 +166,10 @@ export default function FeaturePage() {
               <MetaRow label="Traces" value={row.n_traces} />
               <MetaRow label="Freq bins" value={row.n_freqs} />
               <MetaRow label="Power (min/max/mean)" value={`${row.power_min.toFixed(1)} / ${row.power_max.toFixed(1)} / ${row.power_mean.toFixed(1)} dBm`} />
-              <MetaRow label="Time span (unix)" value={`${row.unix_time_min} – ${row.unix_time_max}`} />
+              <MetaRow label="Time span" value={`${formatDateTime(row.unix_time_min)} – ${formatDateTime(row.unix_time_max)}`} />
               <MetaRow label="Mission" value={row.mission_type} />
               <MetaRow label="Site / Sensor" value={`${row.site} / ${row.sensor}`} />
               <MetaRow label="Days" value={row.days.join(', ') || '—'} />
-              <MetaRow label="Runs" value={row.run_ids.join(', ') || '—'} />
             </dl>
             <button className="button-link" onClick={() => loadSummary(row)}>
               {summaryStatus === 'loading' ? 'Loading…' : 'Load band summary'}
@@ -118,15 +183,23 @@ export default function FeaturePage() {
         <section className="band-card">
           <div className="band-card__heading">
             <h2>
-              Band {summary.band_index} {summary.band_label ? `(${summary.band_label})` : ''} — mean power
+              Band {summary.band_index} {summary.band_label ? `(${summary.band_label})` : ''} — summary
+              {summary.source && (
+                <span style={{ fontSize: '0.8em', marginLeft: '0.5em', opacity: 0.7 }}>
+                  (from {summary.source})
+                </span>
+              )}
             </h2>
             <span className="badge">summary</span>
           </div>
           <MetaRow label="Traces" value={summary.n_traces} />
           <MetaRow label="Freq range" value={`${(summary.start_hz / 1e6).toFixed(3)} - ${(summary.stop_hz / 1e6).toFixed(3)} MHz`} />
-          <MetaRow label="Runs" value={summary.run_ids.join(', ') || '—'} />
           <MetaRow label="Days" value={summary.days.join(', ') || '—'} />
-          <MiniLineChart points={chartPoints} />
+          {summary.stats && summary.stats.length > 0 ? (
+            <MiniLineChart points={chartPoints} />
+          ) : (
+            <p className="muted">Per-frequency stats not available (using feature.parquet aggregate stats only)</p>
+          )}
         </section>
       )}
     </main>

@@ -119,6 +119,24 @@ Flags:
 - `--bronze-prefix <prefix>` to override the default derived prefix (`bronze/mission_type=<m>/site=<s>/sensor=<sensor>/`)
 - `--dry-run` or `--list-bands` to inspect matching objects without processing.
 
+## MinIO/DuckDB visualization (backend)
+
+The backend now provides endpoints to query gold feature parquet and optional bronze band summaries via DuckDB/httpfs:
+
+### Feature endpoints
+
+- `GET /feature` — query `gold/survey/<location>/<YYYY-MM>/feature.parquet` with filters (band_index, band_label, day, run_id, limit)
+- `GET /feature/schema` — schema for a feature.parquet file
+- `GET /feature/locations` — list available locations from `gold/survey/`
+- `GET /feature/months?location=<loc>` — list available months (YYYY-MM) for a location
+
+### Bronze endpoints (optional, slower)
+
+- `GET /bronze/bands` — list band objects under bronze prefix
+- `GET /bronze/band/{band_index}/summary` — compute per-frequency min/avg/max from bronze `band*.parquet`. Use `?use_feature=true` (default) to prefer `feature.parquet` stats; set `use_feature=false` to force full bronze scan for per-frequency breakdowns.
+
+**Note**: The bronze summary endpoint uses `feature.parquet` by default (fast, band-level stats only). Full bronze scans (per-frequency stats) are only performed when `feature.parquet` is unavailable or `use_feature=false` is set, as they are much slower.
+
 ## Backend: MinIO + DuckDB feature/bronze APIs
 
 The FastAPI backend can now stream `feature.parquet` (gold) and on-demand bronze band summaries directly from MinIO via DuckDB/httpfs (no local copies).

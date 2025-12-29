@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 
 from app.services.duck import bucket_name, get_connection
+from app.services.minio_client import bucket_name as get_bucket_name, get_minio_client
 
 router = APIRouter(prefix="/feature", tags=["feature"])
 
@@ -72,4 +73,41 @@ def get_feature_schema(
         for name, dtype, null, key, default, extra in schema_rows
     ]
     return {"path": obj, "schema": schema}
+
+
+@router.get("/locations")
+def list_locations():
+    """List all available locations from gold/survey/."""
+    client = get_minio_client()
+    bucket = get_bucket_name()
+    prefix = "gold/survey/"
+    locations = set()
+    
+    for obj in client.list_objects(bucket, prefix=prefix, recursive=False):
+        # Extract location from path like "gold/survey/LOCATION/"
+        parts = obj.object_name.replace(prefix, "").split("/")
+        if parts and parts[0]:
+            locations.add(parts[0])
+    
+    return jsonable_encoder({"locations": sorted(locations)})
+
+
+@router.get("/months")
+def list_months(location: str = Query(..., description="Location to list months for")):
+    """List all available months (YYYY-MM) for a given location."""
+    client = get_minio_client()
+    bucket = get_bucket_name()
+    prefix = f"gold/survey/{location}/"
+    months = set()
+    
+    for obj in client.list_objects(bucket, prefix=prefix, recursive=False):
+        # Extract month from path like "gold/survey/LOCATION/YYYY-MM/"
+        parts = obj.object_name.replace(prefix, "").split("/")
+        if parts and parts[0] and parts[0].endswith("/"):
+            month = parts[0].rstrip("/")
+            # Validate it looks like YYYY-MM
+            if len(month) == 7 and month[4] == "-":
+                months.add(month)
+    
+    return jsonable_encoder({"location": location, "months": sorted(months)})
 

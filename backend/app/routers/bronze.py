@@ -122,7 +122,55 @@ def band_summary(
     month: str = Query(...),
     day: str | None = Query(None),
     run_id: str | None = Query(None),
+    use_feature: bool = Query(True, description="Use feature.parquet if available; else scan bronze"),
 ):
+    # Try feature.parquet first if requested
+    if use_feature:
+        try:
+            # Use site as location for feature path
+            norm_month = f"{year}-{month}"
+            feature_obj = f"s3://{bucket_name()}/gold/survey/{site}/{norm_month}/feature.parquet"
+            con = get_connection()
+            feature_df = con.execute(
+                """
+                SELECT 
+                  band_index, band_label, start_hz, stop_hz, step_hz,
+                  n_traces, n_freqs, unix_time_min, unix_time_max, days
+                FROM read_parquet(?) 
+                WHERE band_index = ?
+                """,
+                [feature_obj, band_index],
+            ).fetchdf()
+            
+            if not feature_df.empty:
+                row = feature_df.iloc[0]
+                days_val = row["days"]
+                if isinstance(days_val, list):
+                    days_list = days_val
+                elif hasattr(days_val, "tolist"):
+                    days_list = days_val.tolist()
+                else:
+                    days_list = list(days_val) if days_val else []
+                
+                # Return summary from feature.parquet (no per-frequency stats)
+                return jsonable_encoder({
+                    "band_index": int(row["band_index"]),
+                    "band_label": row["band_label"] if pd.notna(row["band_label"]) else None,
+                    "n_traces": int(row["n_traces"]),
+                    "start_hz": float(row["start_hz"]),
+                    "stop_hz": float(row["stop_hz"]),
+                    "step_hz": float(row["step_hz"]),
+                    "unix_time_min": int(row["unix_time_min"]) if pd.notna(row["unix_time_min"]) else None,
+                    "unix_time_max": int(row["unix_time_max"]) if pd.notna(row["unix_time_max"]) else None,
+                    "days": days_list,
+                    "stats": [],  # No per-frequency stats from feature.parquet
+                    "source": "feature.parquet",
+                })
+        except Exception:
+            # Fall through to bronze scan if feature.parquet fails
+            pass
+    
+    # Fallback to bronze scan for full per-frequency stats
     bands = _list_band_objects(
         mission_type=mission_type,
         site=site,
@@ -191,9 +239,9 @@ def band_summary(
         "step_hz": float(step_hz),
         "unix_time_min": int(unix_time_min) if unix_time_min is not None else None,
         "unix_time_max": int(unix_time_max) if unix_time_max is not None else None,
-        "run_ids": band.get("run_ids", []),
         "days": band.get("days", []),
         "stats": band_stats,
+        "source": "bronze",
     }
     return jsonable_encoder(payload)
 
