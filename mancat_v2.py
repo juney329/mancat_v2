@@ -150,9 +150,7 @@ def list_band_parquet_objects(
         day = partitions.get("day")
         if day_filter and (day is None or day not in day_filter):
             continue
-        run_id = partitions.get("run_id")
-        if run_id_filter and run_id != run_id_filter:
-            continue
+        # run_id is no longer in path structure, skip path-based filtering
         band_label = partitions.get("band")
         if band_label_filter and band_label != band_label_filter:
             continue
@@ -163,8 +161,7 @@ def list_band_parquet_objects(
             entry.band_label = band_label
         if day:
             entry.days.add(day)
-        if run_id:
-            entry.run_ids.add(run_id)
+        # run_id is no longer in path, so we can't extract it from path
     return bands
 
 
@@ -373,7 +370,12 @@ def main():
     year, month = parse_month(args.month)
     day_filter = parse_days(args.days)
 
-    base_prefix = args.bronze_prefix or f"bronze/mission_type={mission_type}/site={site}/sensor={sensor}/"
+    # New path structure: bronze/mission_type={m}/site={s}/year={y}/month={m}/day={d}/sensor={s}/band={b}/
+    if args.bronze_prefix:
+        base_prefix = args.bronze_prefix
+    else:
+        # Build prefix with new structure - include year/month, day will be filtered in list_band_parquet_objects
+        base_prefix = f"bronze/mission_type={mission_type}/site={site}/year={year}/month={month}/"
 
     client = build_minio_client(endpoint, access_key, secret_key, secure=args.use_ssl)
     bands = list_band_parquet_objects(

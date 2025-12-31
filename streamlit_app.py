@@ -47,7 +47,7 @@ def load_feature(location: str, month: str) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def load_band_summary(band_index: int, mission_type: str, site: str, sensor: str, year: str, month: str) -> pd.DataFrame:
     bucket = os.getenv("MINIO_BUCKET", "rf-lake")
-    prefix = f"s3://{bucket}/bronze/mission_type={mission_type}/site={site}/sensor={sensor}/band=*/year={year}/month={month}/**/band{band_index}.parquet"
+    prefix = f"s3://{bucket}/bronze/mission_type={mission_type}/site={site}/year={year}/month={month}/day=*/sensor={sensor}/band=*/band{band_index}.parquet"
     con = duck_conn()
     sql = """
     WITH src AS (

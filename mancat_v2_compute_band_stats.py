@@ -92,11 +92,17 @@ def list_band_objects(
     """List band parquet objects for the given filters."""
     scan_start = time.time()
     
-    # Build optimized prefix if we have mission_type and sensor
-    if mission_type and sensor:
-        prefix = f"bronze/mission_type={mission_type}/site={site}/sensor={sensor}/"
-    elif mission_type:
+    # Build optimized prefix with new path structure: bronze/mission_type={m}/site={s}/year={y}/month={m}/day={d}/sensor={s}/band={b}/
+    if mission_type and site and year and month:
+        if sensor:
+            # Can't include sensor in prefix since it comes after day in new structure
+            prefix = f"bronze/mission_type={mission_type}/site={site}/year={year}/month={month}/"
+        else:
+            prefix = f"bronze/mission_type={mission_type}/site={site}/year={year}/month={month}/"
+    elif mission_type and site:
         prefix = f"bronze/mission_type={mission_type}/site={site}/"
+    elif mission_type:
+        prefix = f"bronze/mission_type={mission_type}/"
     else:
         prefix = "bronze/"
     
@@ -161,7 +167,8 @@ def list_band_objects(
         # Additional filters (only needed if not already in prefix)
         if not prefix.startswith(f"bronze/mission_type={mission_type}/") and mission_type and parts.get("mission_type") != mission_type:
             continue
-        if not prefix.endswith(f"sensor={sensor}/") and sensor and parts.get("sensor") != sensor:
+        # sensor comes after day in new structure, so check separately
+        if sensor and parts.get("sensor") != sensor:
             continue
         
         band_idx = int(m.group(1))
@@ -186,8 +193,8 @@ def list_band_objects(
         bands[key]["object_keys"].append(name)
         if parts.get("day"):
             bands[key]["days"].add(parts.get("day"))
-        if parts.get("run_id"):
-            bands[key]["run_ids"].add(parts.get("run_id"))
+        # run_id is no longer in path structure, so we can't extract it from path
+        # It may be in metadata JSON, but we don't parse that here
     
     if verbose:
         elapsed = time.time() - scan_start

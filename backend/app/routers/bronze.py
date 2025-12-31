@@ -34,7 +34,11 @@ def _list_band_objects(
 ):
     client = get_minio_client()
     bucket = bucket_name()
-    base_prefix = f"bronze/mission_type={mission_type}/site={site}/sensor={sensor}/"
+    # New path structure: bronze/mission_type={m}/site={s}/year={y}/month={m}/day={d}/sensor={s}/band={b}/
+    if day:
+        base_prefix = f"bronze/mission_type={mission_type}/site={site}/year={year}/month={month}/day={day}/sensor={sensor}/"
+    else:
+        base_prefix = f"bronze/mission_type={mission_type}/site={site}/year={year}/month={month}/"
     band_re = re.compile(r"band(\d+)\.parquet$")
     bands: Dict[int, Dict[str, object]] = {}
 
@@ -50,14 +54,18 @@ def _list_band_objects(
         if band_index_filter is not None and band_idx != band_index_filter:
             continue
         parts = _parse_partitions(name.split("/"))
+        # Verify partitions match (year/month already in prefix, but check for consistency)
         if parts.get("year") != year or parts.get("month") != month:
+            continue
+        if parts.get("mission_type") != mission_type or parts.get("site") != site:
+            continue
+        if parts.get("sensor") != sensor:
             continue
         day_part = parts.get("day")
         if day is not None and day_part != day:
             continue
-        run_id = parts.get("run_id")
-        if run_id_filter is not None and run_id != run_id_filter:
-            continue
+        # run_id is no longer in path, but can be in metadata - skip path-based filtering
+        # Note: run_id_filter is kept for API compatibility but won't filter by path
         band_label = parts.get("band")
         if band_label_filter is not None and band_label != band_label_filter:
             continue
@@ -71,8 +79,8 @@ def _list_band_objects(
             entry["band_label"] = band_label
         if day_part:
             entry["days"].add(day_part)
-        if run_id:
-            entry["run_ids"].add(run_id)
+        # run_id is no longer in path, so we can't extract it from path
+        # It may be in metadata JSON, but we don't parse that here
 
     # Convert sets to sorted lists for JSON
     return [
@@ -480,7 +488,7 @@ def list_bands_by_site_month(
         sensor = parts.get("sensor", "")
         band_label = parts.get("band", "")
         day_part = parts.get("day", "")
-        run_id = parts.get("run_id", "")
+        # run_id is no longer in path structure
         
         # Create a unique key per band_index, mission_type, sensor combination
         key = f"{band_idx}|{mission_type}|{sensor}"
@@ -499,8 +507,7 @@ def list_bands_by_site_month(
         
         if day_part:
             bands[key]["days"].add(day_part)
-        if run_id:
-            bands[key]["run_ids"].add(run_id)
+        # run_id is no longer in path, so we can't extract it
     
     # Convert sets to sorted lists and sort by band_index
     result = []
