@@ -1,6 +1,18 @@
 # Configuration for band statistics precomputation
 # Thresholds and metrics to compute
 
+# DuckDB memory limit (e.g., '55GB' for 64GB system, leaves ~9GB for OS)
+# Can be overridden via --memory-limit command-line argument
+duckdb_memory_limit: '55GB'
+
+# Holds-only mode: skip UNNEST and compute only min/max/avg (much faster, less memory)
+# When true, all other metrics are ignored
+holds_only: false
+
+# Batch size for holds-only mode (number of traces to process at once)
+# Default 256 is good for most cases; adjust based on RAM and Parquet row group size
+holds_batch_traces: 256
+
 # Power threshold for occupancy calculations (dBm)
 power_threshold: -90.0
 

@@ -130,10 +130,86 @@ def band_summary(
     if not force_bronze:
         try:
             norm_month = f"{year}-{month}"
-            stats_obj = f"s3://{bucket_name()}/gold/survey/{site}/{norm_month}/band{band_index}_stats.parquet"
             con = get_connection()
             
-            # Check if file exists by attempting to read metadata
+            # Try holds file first (faster, holds-only mode)
+            holds_obj = f"s3://{bucket_name()}/gold/survey/{site}/{norm_month}/band{band_index}_holds.parquet"
+            stats_obj = f"s3://{bucket_name()}/gold/survey/{site}/{norm_month}/band{band_index}_stats.parquet"
+            
+            # Check holds file first
+            holds_file_exists = False
+            holds_file_valid = False
+            try:
+                holds_df = con.execute("SELECT * FROM read_parquet(?) LIMIT 1", [holds_obj]).fetchdf()
+                if not holds_df.empty:
+                    holds_file_exists = True
+                    # Verify filters match by checking metadata
+                    first_row = holds_df.iloc[0]
+                    holds_mission_type = first_row.get("meta_mission_type", "")
+                    holds_sensor = first_row.get("meta_sensor", "")
+                    # Check if mission_type and sensor match requested filters
+                    if holds_mission_type == mission_type and holds_sensor == sensor:
+                        holds_file_valid = True
+            except Exception:
+                # Holds file doesn't exist or can't be read
+                pass
+            
+            # Use holds file if it exists and filters match
+            if holds_file_valid:
+                try:
+                    full_stats_df = con.execute("SELECT * FROM read_parquet(?)", [holds_obj]).fetchdf()
+                    
+                    # Extract stats (same schema as stats file for core fields)
+                    stats_list = []
+                    for _, row in full_stats_df.iterrows():
+                        stat_entry = {
+                            "freq_hz": float(row.get("freq_hz", 0)),
+                            "power_min": float(row.get("power_min", 0)),
+                            "power_max": float(row.get("power_max", 0)),
+                            "power_mean": float(row.get("power_mean", 0)),
+                        }
+                        # Holds file doesn't have percentiles or occupancy metrics
+                        stats_list.append(stat_entry)
+                    
+                    # Extract metadata from first row
+                    first_row = full_stats_df.iloc[0]
+                    
+                    meta_site = first_row.get("meta_site", "")
+                    meta_band_label = first_row.get("meta_band_label", "")
+                    meta_total_traces = first_row.get("meta_total_traces")
+                    meta_time_min = first_row.get("meta_time_min")
+                    meta_time_max = first_row.get("meta_time_max")
+                    meta_freq_start = first_row.get("meta_freq_start_hz")
+                    meta_freq_stop = first_row.get("meta_freq_stop_hz")
+                    meta_freq_step = first_row.get("meta_freq_step_hz")
+                    meta_days_str = first_row.get("meta_days", "")
+                    meta_run_ids_str = first_row.get("meta_run_ids", "")
+                    
+                    # Parse comma-separated lists
+                    days_list = [d.strip() for d in meta_days_str.split(",")] if meta_days_str else []
+                    days_list = [d for d in days_list if d]  # Remove empty strings
+                    run_ids_list = [r.strip() for r in meta_run_ids_str.split(",")] if meta_run_ids_str else []
+                    run_ids_list = [r for r in run_ids_list if r]  # Remove empty strings
+                    
+                    return jsonable_encoder({
+                        "band_index": band_index,
+                        "band_label": meta_band_label if meta_band_label else None,
+                        "n_traces": int(meta_total_traces) if meta_total_traces is not None else None,
+                        "start_hz": float(meta_freq_start) if meta_freq_start is not None else None,
+                        "stop_hz": float(meta_freq_stop) if meta_freq_stop is not None else None,
+                        "step_hz": float(meta_freq_step) if meta_freq_step is not None else None,
+                        "unix_time_min": int(meta_time_min) if meta_time_min is not None else None,
+                        "unix_time_max": int(meta_time_max) if meta_time_max is not None else None,
+                        "days": days_list,
+                        "run_ids": run_ids_list,
+                        "stats": stats_list,
+                        "source": "precomputed_holds",
+                    })
+                except Exception:
+                    # Error reading holds file, fall through to stats file
+                    pass
+            
+            # Fall back to stats file if holds file doesn't exist or filters don't match
             try:
                 stats_df = con.execute("SELECT * FROM read_parquet(?) LIMIT 1", [stats_obj]).fetchdf()
                 

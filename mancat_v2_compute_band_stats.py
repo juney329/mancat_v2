@@ -17,11 +17,12 @@ from typing import Dict, List, Optional, Set
 
 try:
     import duckdb
+    import numpy as np
     import pyarrow as pa
     import pyarrow.parquet as pq
     import yaml
 except ImportError as e:
-    raise SystemExit(f"Missing required dependency: {e}. Install with: pip install duckdb pyarrow pyyaml")
+    raise SystemExit(f"Missing required dependency: {e}. Install with: pip install duckdb numpy pyarrow pyyaml")
 
 from minio import Minio
 
@@ -42,7 +43,7 @@ def build_minio_client(endpoint: str, access_key: str, secret_key: str, secure: 
     return Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
 
 
-def get_duckdb_connection(endpoint: str, access_key: str, secret_key: str, secure: bool) -> duckdb.DuckDBPyConnection:
+def get_duckdb_connection(endpoint: str, access_key: str, secret_key: str, secure: bool, memory_limit: str = "55GB") -> duckdb.DuckDBPyConnection:
     """Create DuckDB connection configured for MinIO."""
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
@@ -53,12 +54,17 @@ def get_duckdb_connection(endpoint: str, access_key: str, secret_key: str, secur
     con.execute("SET s3_use_ssl=$1;", ["true" if secure else "false"])
 
     # Memory and performance optimizations to prevent OOM
-    # Increase memory limit (adjust based on available RAM, leave some for OS)
-    con.execute("SET memory_limit='50GB';")  # Adjust to match your VM's RAM
-    # Reduce threads to lower memory usage
-    con.execute("SET threads=16;")  # Adjust based on your CPU cores
+    # Set memory limit (leaves ~9GB for OS on 64GB system)
+    con.execute(f"SET memory_limit='{memory_limit}';")
+    con.execute(f"SET max_memory='{memory_limit}';")  # Additional safeguard
+    # Reduce threads to lower memory usage (8 threads for better memory efficiency)
+    con.execute("SET threads=8;")
     # Disable insertion-order preservation to save memory
     con.execute("SET preserve_insertion_order=false;")
+    # Disable object cache to reduce memory usage
+    con.execute("SET enable_object_cache=false;")
+    # Set temp directory for spillover if needed
+    con.execute("SET temp_directory='/tmp';")
     return con
 
 
@@ -191,21 +197,228 @@ def list_band_objects(
     return list(bands.values())
 
 
+def power_dbm_to_array(batch: pa.RecordBatch, n_freqs: int) -> np.ndarray:
+    """
+    Efficiently convert Arrow list column (power_dbm) to 2D numpy array.
+    
+    Args:
+        batch: Arrow RecordBatch containing power_dbm column
+        n_freqs: Expected number of frequency bins per trace
+        
+    Returns:
+        2D numpy array of shape (batch_size, n_freqs) as float32
+    """
+    power_col = batch.column("power_dbm")
+    
+    # Check if it's a FixedSizeListArray (fast path)
+    if not pa.types.is_fixed_size_list(power_col.type):
+        # Fallback for variable-length lists (slower)
+        return np.stack([np.asarray(power_col[i].as_py(), dtype=np.float32) for i in range(batch.num_rows)], axis=0)
+    
+    # For FixedSizeListArray, .values is a flat array of length batch_rows * n_freqs
+    # When using fetch_record_batch_reader, each batch is self-contained (no offset needed)
+    flat = power_col.values.to_numpy(zero_copy_only=False)
+    
+    # If it's already float32, avoid astype copy
+    if flat.dtype != np.float32:
+        flat = flat.astype(np.float32, copy=False)
+    
+    return flat.reshape((batch.num_rows, n_freqs))
+
+
+def compute_band_holds(
+    con: duckdb.DuckDBPyConnection,
+    bucket: str,
+    band_info: Dict,
+    config: Dict,
+    batch_size: int = 256,
+    verbose: bool = True,
+) -> pa.Table:
+    """
+    Compute band holds (min/max/avg) using streaming batch processing.
+    Skips UNNEST entirely by processing Arrow batches directly.
+    
+    Args:
+        con: DuckDB connection (configured for MinIO)
+        bucket: MinIO bucket name
+        band_info: Band information dictionary
+        config: Configuration dictionary
+        batch_size: Number of traces to process per batch
+        verbose: Whether to print progress
+        
+    Returns:
+        PyArrow Table with holds statistics per frequency bin
+    """
+    start_time = time.time()
+    
+    paths = [f"s3://{bucket}/{key}" for key in band_info["object_keys"]]
+    if verbose:
+        print(f"    Reading {len(paths)} parquet file(s) from MinIO (holds-only mode)...")
+    
+    # Get metadata first (start_hz, step_hz, n_traces)
+    # Get n_freqs separately by reading one row and checking array length
+    meta_query = """
+    SELECT
+      MIN(start_hz) AS start_hz,
+      MAX(stop_hz) AS stop_hz,
+      MIN(step_hz) AS step_hz,
+      COUNT(*) AS n_traces,
+      MIN(unix_time_sec) AS unix_time_min,
+      MAX(unix_time_sec) AS unix_time_max
+    FROM read_parquet($1)
+    """
+    meta_start = time.time()
+    meta_row = con.execute(meta_query, [paths]).fetchone()
+    if verbose:
+        print(f"    Metadata query completed in {time.time() - meta_start:.2f}s")
+    
+    start_hz, stop_hz, step_hz, n_traces, time_min, time_max = meta_row
+    
+    # Get n_freqs by reading one row and checking the array length
+    # This is more reliable than calculating from step_hz (avoids rounding errors)
+    n_freqs_query = "SELECT power_dbm FROM read_parquet($1) LIMIT 1"
+    sample_row = con.execute(n_freqs_query, [paths]).fetchone()
+    if sample_row and sample_row[0]:
+        # sample_row[0] is the power_dbm array, get its length
+        n_freqs = len(sample_row[0])
+    else:
+        # Fallback: calculate from step_hz (less reliable due to rounding)
+        n_freqs = int(round((stop_hz - start_hz) / step_hz)) + 1
+    if verbose:
+        print(f"    Found {n_traces:,} traces")
+        print(f"    Frequency range: {start_hz:.6e} - {stop_hz:.6e} Hz (step: {step_hz:.2f} Hz)")
+        print(f"    Frequency bins: {n_freqs:,}")
+        if time_min and time_max:
+            dt_min = datetime.fromtimestamp(time_min)
+            dt_max = datetime.fromtimestamp(time_max)
+            print(f"    Time range: {dt_min.strftime('%Y-%m-%d %H:%M:%S')} to {dt_max.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    if verbose:
+        print(f"    Computing holds (min/max/avg) using batch size {batch_size}...")
+    
+    # Initialize accumulators
+    # Use float32 for min/max (matches power data precision)
+    # Use float64 for sum (prevents precision drift over many traces)
+    min_vec = np.full(n_freqs, np.inf, dtype=np.float32)
+    max_vec = np.full(n_freqs, -np.inf, dtype=np.float32)
+    sum_vec = np.zeros(n_freqs, dtype=np.float64)
+    count_traces = 0
+    
+    # Stream Arrow batches from DuckDB using record batch reader (true streaming)
+    stats_start = time.time()
+    try:
+        # Use fetch_record_batch() which returns a RecordBatchReader for true streaming
+        # This avoids materializing the entire table upfront
+        reader = con.execute(
+            "SELECT power_dbm FROM read_parquet($1)", [paths]
+        ).fetch_record_batch(batch_size)
+        
+        # Process batches as they stream
+        total_batches = 0
+        for batch in reader:
+            batch_size_actual = batch.num_rows
+            if batch_size_actual == 0:
+                continue
+            
+            # Convert power_dbm list column to 2D numpy array
+            power_array = power_dbm_to_array(batch, n_freqs)
+            
+            # Update accumulators (optimized to avoid unnecessary copies)
+            min_vec = np.minimum(min_vec, power_array.min(axis=0))
+            max_vec = np.maximum(max_vec, power_array.max(axis=0))
+            # Use sum(..., dtype=float64) to accumulate directly into float64 without copying
+            sum_vec += power_array.sum(axis=0, dtype=np.float64)
+            count_traces += batch_size_actual
+            
+            total_batches += 1
+            if verbose and total_batches % 10 == 0:
+                elapsed = time.time() - stats_start
+                print(f"      Processed {total_batches} batches ({count_traces:,} traces) in {elapsed:.2f}s")
+        
+    except Exception as e:
+        if verbose:
+            print(f"    Error during batch processing: {e}")
+        raise
+    
+    if count_traces == 0:
+        raise ValueError("No traces processed")
+    
+    # Compute mean
+    mean_vec = (sum_vec / count_traces).astype(np.float32)
+    
+    if verbose:
+        elapsed = time.time() - stats_start
+        print(f"    Holds computation completed in {elapsed:.2f}s ({elapsed/60:.1f} minutes)")
+        print(f"    Processed {count_traces:,} traces in {total_batches} batches")
+    
+    # Build result DataFrame
+    import pandas as pd
+    freq_indices = np.arange(1, n_freqs + 1, dtype=int)
+    freq_hz = start_hz + (freq_indices - 1) * step_hz
+    
+    stats_df = pd.DataFrame({
+        "freq_idx": freq_indices,
+        "freq_hz": freq_hz,
+        "power_min": min_vec,
+        "power_mean": mean_vec,
+        "power_max": max_vec,
+    })
+    
+    # Add metadata columns (same value for all rows)
+    stats_df["meta_site"] = band_info.get("site", "")
+    stats_df["meta_year"] = band_info.get("year", "")
+    stats_df["meta_month"] = band_info.get("month", "")
+    stats_df["meta_band_index"] = band_info["band_index"]
+    stats_df["meta_band_label"] = band_info.get("band_label") or ""
+    stats_df["meta_mission_type"] = band_info["mission_type"]
+    stats_df["meta_sensor"] = band_info["sensor"]
+    stats_df["meta_total_traces"] = int(count_traces)
+    stats_df["meta_time_min"] = int(time_min) if time_min else None
+    stats_df["meta_time_max"] = int(time_max) if time_max else None
+    stats_df["meta_freq_start_hz"] = float(start_hz)
+    stats_df["meta_freq_stop_hz"] = float(stop_hz)
+    stats_df["meta_freq_step_hz"] = float(step_hz)
+    stats_df["meta_config_power_threshold"] = float(config.get("power_threshold", -100.0))
+    stats_df["meta_days"] = ",".join(sorted(list(band_info["days"])))
+    stats_df["meta_run_ids"] = ",".join(sorted(list(band_info["run_ids"])))
+    
+    # Convert to Arrow table
+    try:
+        table = pa.Table.from_pandas(stats_df)
+    except Exception as e:
+        if "numpy" in str(e).lower():
+            raise SystemExit(f"numpy is required for pandas-to-arrow conversion. Install with: pip install numpy")
+        raise
+    
+    if verbose:
+        elapsed = time.time() - start_time
+        print(f"    Total computation time: {elapsed:.2f}s ({elapsed/60:.1f} minutes)")
+    
+    return table
+
+
 def compute_band_statistics(
     con: duckdb.DuckDBPyConnection,
     bucket: str,
     band_info: Dict,
     config: Dict,
+    holds_only: bool = False,
+    batch_size: int = 256,
     verbose: bool = True,
 ) -> pa.Table:
     """Compute comprehensive statistics for a band."""
+    # If holds_only mode, use the fast streaming approach
+    if holds_only:
+        return compute_band_holds(con, bucket, band_info, config, batch_size=batch_size, verbose=verbose)
+    
+    # Otherwise, use the full UNNEST-based approach
     start_time = time.time()
     
     paths = [f"s3://{bucket}/{key}" for key in band_info["object_keys"]]
     if verbose:
         print(f"    Reading {len(paths)} parquet file(s) from MinIO...")
     
-    # Get metadata
+    # Get metadata (optimized: these are constant per file, so we can use DISTINCT or just first row)
     meta_query = """
     SELECT
       MIN(start_hz) AS start_hz,
@@ -245,10 +458,10 @@ def compute_band_statistics(
         "AVG(val) AS power_mean",
     ]
     
-    # Add percentiles if enabled
+    # Add percentiles if enabled (using APPROX_QUANTILE for better performance and lower memory)
     if metrics.get("percentiles", True):
         for p in percentiles:
-            select_parts.append(f"QUANTILE_CONT(val, {p/100.0}) AS power_p{p}")
+            select_parts.append(f"APPROX_QUANTILE(val, {p/100.0}) AS power_p{p}")
     
     # Add occupancy metrics if enabled
     if metrics.get("time_occupancy", True):
@@ -295,17 +508,40 @@ def compute_band_statistics(
     if verbose:
         print(f"    Computing statistics (min/max/avg", end="")
         if metrics.get("percentiles", True):
-            print(f"/percentiles", end="")
+            print(f"/approx_percentiles", end="")
         if metrics.get("time_occupancy", True) or metrics.get("frequency_occupancy", True) or metrics.get("power_occupancy", True):
             print(f"/occupancy", end="")
         if metrics.get("threshold_crossings", True):
             print(f"/crossings", end="")
         print(f")...")
+        print(f"    This may take several minutes for large datasets...")
+        if n_traces > 10000:
+            estimated_time_min = (n_traces / 10000) * 2  # Rough estimate: 2 min per 10k traces
+            print(f"    Estimated processing time: ~{estimated_time_min:.1f} minutes")
     
     stats_start = time.time()
-    stats_df = con.execute(stats_query, [paths]).fetchdf()
+    last_progress_time = time.time()
+    
+    # Enable progress bar if available
+    try:
+        con.execute("SET enable_progress_bar=true;")
+    except:
+        pass
+    
+    # Execute query with progress monitoring
+    try:
+        stats_df = con.execute(stats_query, [paths]).fetchdf()
+    except Exception as e:
+        # Clear any intermediate results on error
+        try:
+            con.execute("RESET;")
+        except:
+            pass
+        raise
+    
+    elapsed = time.time() - stats_start
     if verbose:
-        print(f"    Statistics computation completed in {time.time() - stats_start:.2f}s")
+        print(f"    Statistics computation completed in {elapsed:.2f}s ({elapsed/60:.1f} minutes)")
     
     # Add frequency in Hz
     stats_df["freq_hz"] = start_hz + (stats_df["freq_idx"] - 1) * step_hz
@@ -329,8 +565,13 @@ def compute_band_statistics(
     stats_df["meta_days"] = ",".join(sorted(list(band_info["days"])))
     stats_df["meta_run_ids"] = ",".join(sorted(list(band_info["run_ids"])))
     
-    # Convert to Arrow table
-    table = pa.Table.from_pandas(stats_df)
+    # Convert to Arrow table (requires numpy for pandas conversion)
+    try:
+        table = pa.Table.from_pandas(stats_df)
+    except Exception as e:
+        if "numpy" in str(e).lower():
+            raise SystemExit(f"numpy is required for pandas-to-arrow conversion. Install with: pip install numpy")
+        raise
     
     if verbose:
         elapsed = time.time() - start_time
@@ -347,10 +588,14 @@ def write_band_stats_to_minio(
     month: str,
     band_index: int,
     table: pa.Table,
+    holds_only: bool = False,
 ) -> str:
     """Write band statistics table to MinIO as parquet."""
     month_str = f"{year}-{month}"
-    object_path = f"gold/survey/{site}/{month_str}/band{band_index}_stats.parquet"
+    if holds_only:
+        object_path = f"gold/survey/{site}/{month_str}/band{band_index}_holds.parquet"
+    else:
+        object_path = f"gold/survey/{site}/{month_str}/band{band_index}_stats.parquet"
     
     # Write table to bytes buffer
     buffer = io.BytesIO()
@@ -385,6 +630,9 @@ def main():
     parser.add_argument("--mission-type", default="survey", help="Filter by mission_type (default: survey)")
     parser.add_argument("--sensor", default="CRFS", help="Filter by sensor (default: CRFS)")
     parser.add_argument("--band-index", type=int, help="Process only specific band index (optional)")
+    parser.add_argument("--memory-limit", default=None, help="DuckDB memory limit (e.g., '55GB'). Default: from config or '55GB'")
+    parser.add_argument("--holds-only", action="store_true", help="Enable holds-only mode (skip UNNEST, compute only min/max/avg)")
+    parser.add_argument("--holds-batch-size", type=int, default=None, help="Batch size for holds-only mode (number of traces per batch). Default: from config or 256")
     
     args = parser.parse_args()
     
@@ -392,9 +640,18 @@ def main():
     config_path = args.config or "band_stats_config.yaml"
     config = load_config(config_path)
     
+    # Get memory limit from config or command line, default to 55GB
+    memory_limit = args.memory_limit or config.get("duckdb_memory_limit", "55GB")
+    
+    # Get holds_only mode from command line or config
+    holds_only = args.holds_only or config.get("holds_only", False)
+    
+    # Get batch size from command line or config, default to 256
+    batch_size = args.holds_batch_size or config.get("holds_batch_traces", 256)
+    
     # Build clients
     minio_client = build_minio_client(args.endpoint, args.access_key, args.secret_key, args.secure)
-    duck_con = get_duckdb_connection(args.endpoint, args.access_key, args.secret_key, args.secure)
+    duck_con = get_duckdb_connection(args.endpoint, args.access_key, args.secret_key, args.secure, memory_limit=memory_limit)
     
     # List bands
     print(f"\n{'='*80}")
@@ -461,9 +718,13 @@ def main():
             band_info["year"] = args.year
             band_info["month"] = args.month
             
-            print(f"  → Computing statistics from {num_objects} parquet file(s)...")
+            mode_str = "holds (min/max/avg only)" if holds_only else "full statistics"
+            print(f"  → Computing {mode_str} from {num_objects} parquet file(s)...")
             # Compute statistics
-            stats_table = compute_band_statistics(duck_con, args.bucket, band_info, config, verbose=True)
+            stats_table = compute_band_statistics(
+                duck_con, args.bucket, band_info, config, 
+                holds_only=holds_only, batch_size=batch_size, verbose=True
+            )
             
             print(f"  → Computed stats for {stats_table.num_rows} frequency bins")
             
@@ -488,6 +749,7 @@ def main():
                 args.month,
                 band_idx,
                 stats_table,
+                holds_only=holds_only,
             )
             
             # Get file size

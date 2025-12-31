@@ -278,18 +278,45 @@ export default function FeatureBandDetailPage() {
     }
   }, []);
 
+  // Helper function to format number with max 3 decimal places, removing trailing zeros
+  const formatNumber = (value: number, maxDecimals: number = 3): string => {
+    // Round to maxDecimals places and remove trailing zeros
+    const rounded = value.toFixed(maxDecimals);
+    // Remove trailing zeros and decimal point if not needed
+    return parseFloat(rounded).toString();
+  };
+
+  // Helper function to format center frequency (auto: MHz if < 10 GHz, GHz if >= 10 GHz)
+  const formatCenterFreq = (freqHz: number): string => {
+    if (freqHz >= 10e9) {
+      return `${formatNumber(freqHz / 1e9)} GHz`;
+    } else {
+      return `${formatNumber(freqHz / 1e6)} MHz`;
+    }
+  };
+
+  // Helper function to format bandwidth (auto: MHz if >= 1 MHz, kHz if < 1 MHz)
+  const formatBandwidth = (bwHz: number): string => {
+    if (bwHz >= 1e6) {
+      return `${formatNumber(bwHz / 1e6)} MHz`;
+    } else {
+      return `${formatNumber(bwHz / 1e3)} kHz`;
+    }
+  };
+
   const handleExportAssignments = useCallback(() => {
     if (allAssignments.length === 0) return;
     
-    // CSV header
-    const headers = ['lat', 'long', 'center_freq_hz', 'bandwidth_hz', 'label'];
+    // CSV header - use readable units in column names
+    const headers = ['lat', 'long', 'center_freq', 'bandwidth', 'label'];
     
     // CSV rows - use allAssignments to export all assignments, not just filtered ones
+    // Format frequencies with appropriate units
     const rows = allAssignments.map((a: Assignment) => [
       a.lat.toString(),
       a.long.toString(),
-      a.center_freq_hz.toString(),
-      a.bandwidth_hz.toString(),
+      formatCenterFreq(a.center_freq_hz),
+      formatBandwidth(a.bandwidth_hz),
       a.label
     ]);
     
